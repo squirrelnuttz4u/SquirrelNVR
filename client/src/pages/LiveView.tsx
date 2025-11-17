@@ -1,24 +1,141 @@
-import React, { useEffect, useState } from 'react';
-import { Grid, Card, CardContent, Typography, Box, Chip } from '@mui/material';
+import React, { useEffect, useState, useRef } from 'react';
+import { Grid, Card, CardContent, Typography, Box, Chip, CircularProgress, Alert } from '@mui/material';
 import { FiberManualRecord } from '@mui/icons-material';
 import Layout from '../components/Layout';
 import api from '../services/api';
+import videojs from 'video.js';
+import 'video.js/dist/video-js.css';
+
+interface CameraWithStatus {
+  id: string;
+  name: string;
+  enabled: boolean;
+  status?: string;
+  isStreaming?: boolean;
+  isRecording?: boolean;
+  viewers?: number;
+}
+
+const VideoPlayer: React.FC<{ camera: CameraWithStatus }> = ({ camera }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const playerRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!videoRef.current) return;
+
+    // Initialize Video.js player
+    const player = videojs(videoRef.current, {
+      controls: true,
+      autoplay: true,
+      muted: true,
+      preload: 'auto',
+      fluid: true,
+      aspectRatio: '16:9',
+      html5: {
+        vhs: {
+          overrideNative: true,
+        },
+        nativeVideoTracks: false,
+        nativeAudioTracks: false,
+        nativeTextTracks: false,
+      },
+    });
+
+    playerRef.current = player;
+
+    // Set source if streaming
+    if (camera.isStreaming) {
+      player.src({
+        src: api.getHLSUrl(camera.id),
+        type: 'application/x-mpegURL',
+      });
+    }
+
+    // Cleanup
+    return () => {
+      if (playerRef.current) {
+        playerRef.current.dispose();
+      }
+    };
+  }, [camera.id, camera.isStreaming]);
+
+  if (!camera.isStreaming) {
+    return (
+      <Box
+        sx={{
+          width: '100%',
+          height: 300,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          bgcolor: 'black',
+          borderRadius: 1,
+          color: 'text.secondary',
+        }}
+      >
+        <Typography>No Stream Available</Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ width: '100%', bgcolor: 'black', borderRadius: 1 }}>
+      <div data-vjs-player>
+        <video
+          ref={videoRef}
+          className="video-js vjs-default-skin"
+          playsInline
+        />
+      </div>
+    </Box>
+  );
+};
 
 const LiveView: React.FC = () => {
-  const [cameras, setCameras] = useState<any[]>([]);
+  const [cameras, setCameras] = useState<CameraWithStatus[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadCameras();
+    const interval = setInterval(loadCameras, 5000); // Refresh every 5 seconds
+    return () => clearInterval(interval);
   }, []);
 
   const loadCameras = async () => {
     try {
+      setError(null);
       const data = await api.getCameras();
-      setCameras(data.filter((c: any) => c.enabled));
-    } catch (error) {
-      console.error('Failed to load cameras:', error);
+      const enabledCameras = Array.isArray(data) ? data.filter((c: any) => c.enabled) : [];
+      setCameras(enabledCameras);
+    } catch (err: any) {
+      console.error('Failed to load cameras:', err);
+      setError(err.response?.data?.error || 'Failed to load cameras. Make sure the backend server is running.');
+      setCameras([]);
+    } finally {
+      setLoading(false);
     }
   };
+
+  if (loading) {
+    return (
+      <Layout title="Live View">
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
+          <CircularProgress />
+        </Box>
+      </Layout>
+    );
+  }
+
+  if (error) {
+    return (
+      <Layout title="Live View">
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+      </Layout>
+    );
+  }
 
   return (
     <Layout title="Live View">
@@ -31,49 +148,14 @@ const LiveView: React.FC = () => {
                   <Typography variant="h6">{camera.name}</Typography>
                   <Chip
                     icon={<FiberManualRecord />}
-                    label={camera.status}
+                    label={camera.isStreaming ? 'Streaming' : 'Offline'}
                     size="small"
-                    color={camera.status === 'online' ? 'success' : 'error'}
+                    color={camera.isStreaming ? 'success' : 'error'}
                   />
                 </Box>
-                <Box
-                  sx={{
-                    width: '100%',
-                    paddingTop: '75%',
-                    position: 'relative',
-                    bgcolor: 'black',
-                    borderRadius: 1,
-                  }}
-                >
-                  {camera.isStreaming ? (
-                    <video
-                      style={{
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'contain',
-                      }}
-                      autoPlay
-                      muted
-                      src={api.getHLSUrl(camera.id)}
-                    />
-                  ) : (
-                    <Box
-                      sx={{
-                        position: 'absolute',
-                        top: '50%',
-                        left: '50%',
-                        transform: 'translate(-50%, -50%)',
-                        textAlign: 'center',
-                        color: 'text.secondary',
-                      }}
-                    >
-                      <Typography>No Stream</Typography>
-                    </Box>
-                  )}
-                </Box>
+
+                <VideoPlayer camera={camera} />
+
                 <Box mt={1} display="flex" justifyContent="space-between">
                   <Typography variant="caption" color="text.secondary">
                     {camera.isRecording ? '🔴 Recording' : 'Not Recording'}
@@ -90,8 +172,11 @@ const LiveView: React.FC = () => {
         {cameras.length === 0 && (
           <Grid item xs={12}>
             <Box textAlign="center" py={8}>
+              <Typography variant="h6" color="text.secondary" gutterBottom>
+                No Cameras Configured
+              </Typography>
               <Typography color="text.secondary">
-                No cameras configured. Add cameras in the Cameras page.
+                Add cameras in the Cameras page to see live feeds here.
               </Typography>
             </Box>
           </Grid>
