@@ -3,7 +3,7 @@ import os from 'os';
 import { AppDataSource } from '../database';
 import { SystemSettings, Camera, Recording, AIDetection } from '../database/entities';
 import { authenticateToken, requireRole, AuthRequest } from '../middleware/auth';
-import storageManager from '../services/storage';
+import storageManager from '../services/storage/StorageManager';
 import notificationService from '../services/notification/NotificationService';
 import logger from '../utils/logger';
 import { MoreThan } from 'typeorm';
@@ -83,11 +83,10 @@ router.put('/settings', authenticateToken, requireRole('admin'), async (req: Aut
     let settings = await settingsRepo.findOne({ where: {} });
 
     if (!settings) {
-      const newSettings = settingsRepo.create(req.body);
-      settings = await settingsRepo.save(newSettings);
+      settings = await settingsRepo.save(settingsRepo.create(req.body)) as SystemSettings;
     } else {
       Object.assign(settings, req.body);
-      settings = await settingsRepo.save(settings);
+      settings = await settingsRepo.save(settings) as SystemSettings;
     }
 
     // Reload notification service if email settings changed
