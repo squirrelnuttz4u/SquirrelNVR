@@ -12,7 +12,6 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Paper,
   Chip,
   Avatar,
   List,
@@ -178,17 +177,6 @@ const Dashboard: React.FC = () => {
       color: '#f44336',
     },
   ];
-
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case 'critical':
-        return 'error';
-      case 'warning':
-        return 'warning';
-      default:
-        return 'info';
-    }
-  };
 
   const getDetectionIcon = (type: string) => {
     switch (type.toLowerCase()) {

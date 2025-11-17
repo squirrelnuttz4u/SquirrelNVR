@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import {
   Box,
   Card,
-  CardContent,
   Typography,
   TextField,
   Button,
@@ -23,7 +22,6 @@ import {
   Email,
   Settings as SettingsIcon,
   SmartToy,
-  People,
 } from '@mui/icons-material';
 import Layout from '../components/Layout';
 import api from '../services/api';
@@ -186,7 +184,7 @@ const Settings: React.FC = () => {
     <Layout title="Settings">
       <Card>
         <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-          <Tabs value={currentTab} onChange={(e, v) => setCurrentTab(v)}>
+          <Tabs value={currentTab} onChange={(_, v) => setCurrentTab(v)}>
             <Tab icon={<SettingsIcon />} label="General" iconPosition="start" />
             <Tab icon={<Storage />} label="Storage" iconPosition="start" />
             <Tab icon={<Email />} label="Email" iconPosition="start" />

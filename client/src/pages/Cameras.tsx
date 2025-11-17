@@ -25,7 +25,6 @@ import {
   Alert,
   Tabs,
   Tab,
-  Autocomplete,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -119,8 +118,8 @@ const Cameras: React.FC = () => {
 
   const loadCameras = async () => {
     try {
-      const response = await api.get('/cameras');
-      setCameras(response.data);
+      const data = await api.getCameras();
+      setCameras(data);
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to load cameras');
     } finally {
@@ -129,12 +128,45 @@ const Cameras: React.FC = () => {
   };
 
   const loadVendorPresets = async () => {
-    try {
-      const response = await api.get('/camera-vendors/presets');
-      setVendorPresets(response.data);
-    } catch (err) {
-      console.error('Failed to load vendor presets:', err);
-    }
+    // Hardcoded vendor presets
+    const presets: VendorPreset[] = [
+      {
+        vendor: 'Reolink',
+        streamType: 'rtsp',
+        defaultPort: 554,
+        streamPath: '/h264Preview_01_main',
+        subStreamPath: '/h264Preview_01_sub',
+        requiresAuth: true,
+        supportsOnvif: true,
+      },
+      {
+        vendor: 'Hikvision',
+        streamType: 'rtsp',
+        defaultPort: 554,
+        streamPath: '/Streaming/Channels/101',
+        subStreamPath: '/Streaming/Channels/102',
+        requiresAuth: true,
+        supportsOnvif: true,
+      },
+      {
+        vendor: 'Dahua',
+        streamType: 'rtsp',
+        defaultPort: 554,
+        streamPath: '/cam/realmonitor?channel=1&subtype=0',
+        subStreamPath: '/cam/realmonitor?channel=1&subtype=1',
+        requiresAuth: true,
+        supportsOnvif: true,
+      },
+      {
+        vendor: 'Amcrest',
+        streamType: 'rtsp',
+        defaultPort: 554,
+        streamPath: '/cam/realmonitor?channel=1&subtype=0',
+        requiresAuth: true,
+        supportsOnvif: true,
+      },
+    ];
+    setVendorPresets(presets);
   };
 
   const handleOpenDialog = (camera?: Camera) => {
@@ -217,9 +249,9 @@ const Cameras: React.FC = () => {
       };
 
       if (editingCamera) {
-        await api.put(`/cameras/${editingCamera.id}`, cameraData);
+        await api.updateCamera(editingCamera.id, cameraData);
       } else {
-        await api.post('/cameras', cameraData);
+        await api.createCamera(cameraData);
       }
 
       handleCloseDialog();
@@ -231,7 +263,7 @@ const Cameras: React.FC = () => {
 
   const handleDeleteCamera = async (id: string) => {
     try {
-      await api.delete(`/cameras/${id}`);
+      await api.deleteCamera(id);
       loadCameras();
       setDeleteConfirm(null);
     } catch (err: any) {
@@ -241,7 +273,7 @@ const Cameras: React.FC = () => {
 
   const handleToggleEnabled = async (camera: Camera) => {
     try {
-      await api.put(`/cameras/${camera.id}`, {
+      await api.updateCamera(camera.id, {
         ...camera,
         enabled: !camera.enabled,
       });

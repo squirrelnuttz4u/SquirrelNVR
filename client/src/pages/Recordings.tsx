@@ -34,12 +34,9 @@ import {
   CheckBox,
   CheckBoxOutlineBlank,
 } from '@mui/icons-material';
-import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
-import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
-import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import Layout from '../components/Layout';
 import api from '../services/api';
-import { formatDistanceToNow, format } from 'date-fns';
+import { format } from 'date-fns';
 
 interface Recording {
   id: string;
@@ -317,8 +314,7 @@ const Recordings: React.FC = () => {
   });
 
   return (
-    <LocalizationProvider dateAdapter={AdapterDateFns}>
-      <Layout title="Recordings">
+    <Layout title="Recordings">
         {error && (
           <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
             {error}
@@ -382,20 +378,26 @@ const Recordings: React.FC = () => {
               </Grid>
 
               <Grid item xs={12} md={2}>
-                <DateTimePicker
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="datetime-local"
                   label="Start Date"
-                  value={startDate}
-                  onChange={setStartDate}
-                  slotProps={{ textField: { size: 'small', fullWidth: true } }}
+                  value={startDate ? format(startDate, "yyyy-MM-dd'T'HH:mm") : ''}
+                  onChange={(e) => setStartDate(e.target.value ? new Date(e.target.value) : null)}
+                  InputLabelProps={{ shrink: true }}
                 />
               </Grid>
 
               <Grid item xs={12} md={2}>
-                <DateTimePicker
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="datetime-local"
                   label="End Date"
-                  value={endDate}
-                  onChange={setEndDate}
-                  slotProps={{ textField: { size: 'small', fullWidth: true } }}
+                  value={endDate ? format(endDate, "yyyy-MM-dd'T'HH:mm") : ''}
+                  onChange={(e) => setEndDate(e.target.value ? new Date(e.target.value) : null)}
+                  InputLabelProps={{ shrink: true }}
                 />
               </Grid>
 
@@ -712,7 +714,7 @@ const Recordings: React.FC = () => {
                   </Typography>
                   <Slider
                     value={clipStartTime}
-                    onChange={(e, value) => setClipStartTime(value as number)}
+                    onChange={(_, value) => setClipStartTime(value as number)}
                     min={0}
                     max={clipRecording.duration}
                     step={1}
@@ -727,7 +729,7 @@ const Recordings: React.FC = () => {
                   </Typography>
                   <Slider
                     value={clipEndTime}
-                    onChange={(e, value) => setClipEndTime(value as number)}
+                    onChange={(_, value) => setClipEndTime(value as number)}
                     min={clipStartTime + 1}
                     max={clipRecording.duration}
                     step={1}
@@ -783,8 +785,7 @@ const Recordings: React.FC = () => {
             {error}
           </Alert>
         </Snackbar>
-      </Layout>
-    </LocalizationProvider>
+    </Layout>
   );
 };
 
