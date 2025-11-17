@@ -237,9 +237,14 @@ const Cameras: React.FC = () => {
 
   const handleSaveCamera = async () => {
     try {
+      // Build the stream URL from vendor preset if applicable
+      const finalStreamUrl = formData.vendor && formData.ipAddress
+        ? buildStreamUrl()
+        : formData.streamUrl;
+
       const cameraData = {
         name: formData.name,
-        streamUrl: formData.streamUrl,
+        streamUrl: finalStreamUrl,
         streamType: formData.streamType,
         username: formData.username,
         password: formData.password,

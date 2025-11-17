@@ -73,9 +73,10 @@ const Detections: React.FC = () => {
   const loadCameras = async () => {
     try {
       const data = await api.getCameras();
-      setCameras(data);
+      setCameras(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Failed to load cameras:', error);
+      setCameras([]);
     }
   };
 
@@ -105,10 +106,11 @@ const Detections: React.FC = () => {
       }
 
       const data = await api.getDetections(params);
-      setDetections(data);
+      setDetections(Array.isArray(data) ? data : []);
     } catch (error: any) {
       console.error('Failed to load detections:', error);
-      setError(error.response?.data?.error || 'Failed to load detections');
+      setError(error.response?.data?.error || 'Failed to load detections. Make sure the backend server is running.');
+      setDetections([]);
     } finally {
       setLoading(false);
     }

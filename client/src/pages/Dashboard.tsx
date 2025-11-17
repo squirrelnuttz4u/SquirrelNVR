@@ -20,6 +20,7 @@ import {
   ListItemText,
   Button,
   IconButton,
+  Alert,
 } from '@mui/material';
 import {
   Videocam,
@@ -71,6 +72,7 @@ const Dashboard: React.FC = () => {
   const [recentDetections, setRecentDetections] = useState<Detection[]>([]);
   const [recentAlarms, setRecentAlarms] = useState<AlarmEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const { lastMessage } = useWebSocket();
 
   useEffect(() => {
@@ -105,6 +107,7 @@ const Dashboard: React.FC = () => {
 
   const loadAllData = async () => {
     try {
+      setError(null);
       const [statsData, camerasData, detectionsData, alarmsData] = await Promise.all([
         api.getSystemStats(),
         api.getCameras(),
@@ -112,12 +115,18 @@ const Dashboard: React.FC = () => {
         api.getAlarmEvents({ limit: 10, sort: 'createdAt:desc' }),
       ]);
 
-      setStats(statsData);
-      setCameras(camerasData);
-      setRecentDetections(detectionsData);
-      setRecentAlarms(alarmsData);
-    } catch (error) {
-      console.error('Failed to load dashboard data:', error);
+      setStats(statsData || {});
+      setCameras(Array.isArray(camerasData) ? camerasData : []);
+      setRecentDetections(Array.isArray(detectionsData) ? detectionsData : []);
+      setRecentAlarms(Array.isArray(alarmsData) ? alarmsData : []);
+    } catch (err: any) {
+      console.error('Failed to load dashboard data:', err);
+      setError(err.response?.data?.error || 'Failed to load dashboard data. Make sure the backend server is running.');
+      // Set safe defaults
+      setStats({});
+      setCameras([]);
+      setRecentDetections([]);
+      setRecentAlarms([]);
     } finally {
       setLoading(false);
     }
@@ -141,7 +150,7 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  if (loading || !stats) {
+  if (loading && !error) {
     return (
       <Layout title="Dashboard">
         <Box sx={{ width: '100%' }}>
@@ -151,28 +160,53 @@ const Dashboard: React.FC = () => {
     );
   }
 
+  if (error) {
+    return (
+      <Layout title="Dashboard">
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+        <Box sx={{ textAlign: 'center', py: 4 }}>
+          <Button variant="contained" onClick={handleRefresh}>
+            Retry
+          </Button>
+        </Box>
+      </Layout>
+    );
+  }
+
+  if (!stats || stats.activeCameras === undefined) {
+    return (
+      <Layout title="Dashboard">
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          No data available
+        </Alert>
+      </Layout>
+    );
+  }
+
   const statCards = [
     {
       title: 'Active Cameras',
-      value: `${stats.activeCameras} / ${stats.totalCameras}`,
+      value: `${stats.activeCameras || 0} / ${stats.totalCameras || 0}`,
       icon: <Videocam fontSize="large" />,
       color: '#2196f3',
     },
     {
       title: 'Recordings',
-      value: stats.recordingsCount.toLocaleString(),
+      value: (stats.recordingsCount || 0).toLocaleString(),
       icon: <VideoLibrary fontSize="large" />,
       color: '#4caf50',
     },
     {
       title: 'AI Detections Today',
-      value: stats.detectionsToday.toLocaleString(),
+      value: (stats.detectionsToday || 0).toLocaleString(),
       icon: <SmartToy fontSize="large" />,
       color: '#ff9800',
     },
     {
       title: 'Storage Used',
-      value: `${stats.storageUsed.toFixed(1)} / ${stats.storageTotal} GB`,
+      value: `${(stats.storageUsed || 0).toFixed(1)} / ${stats.storageTotal || 0} GB`,
       icon: <Storage fontSize="large" />,
       color: '#f44336',
     },
@@ -357,12 +391,12 @@ const Dashboard: React.FC = () => {
                   <Box sx={{ width: '100%', mr: 1 }}>
                     <LinearProgress
                       variant="determinate"
-                      value={stats.cpuUsage}
-                      color={stats.cpuUsage > 80 ? 'error' : 'primary'}
+                      value={stats.cpuUsage || 0}
+                      color={(stats.cpuUsage || 0) > 80 ? 'error' : 'primary'}
                     />
                   </Box>
                   <Typography variant="body2" color="text.secondary">
-                    {stats.cpuUsage.toFixed(1)}%
+                    {(stats.cpuUsage || 0).toFixed(1)}%
                   </Typography>
                 </Box>
               </Box>
@@ -375,12 +409,12 @@ const Dashboard: React.FC = () => {
                   <Box sx={{ width: '100%', mr: 1 }}>
                     <LinearProgress
                       variant="determinate"
-                      value={stats.memoryUsage}
-                      color={stats.memoryUsage > 80 ? 'error' : 'primary'}
+                      value={stats.memoryUsage || 0}
+                      color={(stats.memoryUsage || 0) > 80 ? 'error' : 'primary'}
                     />
                   </Box>
                   <Typography variant="body2" color="text.secondary">
-                    {stats.memoryUsage.toFixed(1)}%
+                    {(stats.memoryUsage || 0).toFixed(1)}%
                   </Typography>
                 </Box>
               </Box>
@@ -393,24 +427,24 @@ const Dashboard: React.FC = () => {
                   <Box sx={{ width: '100%', mr: 1 }}>
                     <LinearProgress
                       variant="determinate"
-                      value={stats.diskUsage}
-                      color={stats.diskUsage > 80 ? 'error' : 'primary'}
+                      value={stats.diskUsage || 0}
+                      color={(stats.diskUsage || 0) > 80 ? 'error' : 'primary'}
                     />
                   </Box>
                   <Typography variant="body2" color="text.secondary">
-                    {stats.diskUsage.toFixed(1)}%
+                    {(stats.diskUsage || 0).toFixed(1)}%
                   </Typography>
                 </Box>
               </Box>
 
               <Box sx={{ mt: 3 }}>
                 <Typography variant="body2" color="text.secondary">
-                  Uptime: {Math.floor(stats.uptime / 3600)}h{' '}
-                  {Math.floor((stats.uptime % 3600) / 60)}m
+                  Uptime: {Math.floor((stats.uptime || 0) / 3600)}h{' '}
+                  {Math.floor(((stats.uptime || 0) % 3600) / 60)}m
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                  Storage: {stats.storageUsed.toFixed(2)} GB / {stats.storageTotal} GB (
-                  {((stats.storageUsed / stats.storageTotal) * 100).toFixed(1)}%)
+                  Storage: {(stats.storageUsed || 0).toFixed(2)} GB / {stats.storageTotal || 0} GB (
+                  {(((stats.storageUsed || 0) / (stats.storageTotal || 1)) * 100).toFixed(1)}%)
                 </Typography>
               </Box>
             </CardContent>
