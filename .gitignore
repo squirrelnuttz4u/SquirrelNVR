@@ -21,7 +21,7 @@ npm-debug.log*
 
 # Video recordings and data
 recordings/
-storage/
+/storage/
 data/*.db
 data/*.sqlite
 data/*.sqlite3
