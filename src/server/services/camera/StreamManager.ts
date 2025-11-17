@@ -154,10 +154,15 @@ export class StreamManager extends EventEmitter {
     // Add credentials for RTSP/RTMP if needed
     if ((camera.streamType === StreamType.RTSP || camera.streamType === StreamType.RTMP) &&
         camera.username && camera.password) {
-      // Parse URL and inject credentials
-      const urlPattern = /^(rtsp|rtmp):\/\//;
-      if (urlPattern.test(url)) {
-        url = url.replace(urlPattern, `$1://${camera.username}:${camera.password}@`);
+      // Check if URL already contains credentials (user:pass@)
+      const hasCredentials = /@/.test(url.split('://')[1]?.split('/')[0] || '');
+
+      if (!hasCredentials) {
+        // Parse URL and inject credentials only if not already present
+        const urlPattern = /^(rtsp|rtmp):\/\//;
+        if (urlPattern.test(url)) {
+          url = url.replace(urlPattern, `$1://${camera.username}:${camera.password}@`);
+        }
       }
     }
 
