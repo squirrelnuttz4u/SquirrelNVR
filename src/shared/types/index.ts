@@ -69,6 +69,15 @@ export interface Camera {
   preRecordSeconds: number;
   postRecordSeconds: number;
 
+  // Audio settings
+  audioEnabled: boolean;
+  audioCodec?: string;
+  twoWayAudio?: boolean;
+
+  // PTZ settings
+  supportsPTZ: boolean;
+  ptzType?: 'onvif' | 'reolink' | 'hikvision' | 'dahua' | 'custom';
+
   // Motion detection
   motionEnabled: boolean;
   motionSensitivity: number; // 0-100

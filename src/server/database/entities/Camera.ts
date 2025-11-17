@@ -57,6 +57,23 @@ export class Camera {
   @Column({ default: 10 })
   postRecordSeconds!: number;
 
+  // Audio settings
+  @Column({ default: true })
+  audioEnabled!: boolean;
+
+  @Column({ nullable: true })
+  audioCodec?: string;
+
+  @Column({ default: false })
+  twoWayAudio!: boolean;
+
+  // PTZ settings
+  @Column({ default: false })
+  supportsPTZ!: boolean;
+
+  @Column({ nullable: true })
+  ptzType?: string;
+
   // Motion detection
   @Column({ default: true })
   motionEnabled!: boolean;
