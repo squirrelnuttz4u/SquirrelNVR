@@ -144,7 +144,6 @@ const Alarms: React.FC = () => {
   const handleOpenDialog = (alarm?: Alarm) => {
     if (alarm) {
       setEditingAlarm(alarm);
-      const conditions = alarm.conditions || {};
       const actions = alarm.actions || {};
       setFormData({
         name: alarm.name,
