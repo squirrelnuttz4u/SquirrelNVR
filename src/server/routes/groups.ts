@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import { In } from 'typeorm';
 import { AppDataSource } from '../database';
 import { UserGroup, User } from '../database/entities';
 import { authenticateToken, requireRole, AuthRequest } from '../middleware/auth';
@@ -115,7 +116,7 @@ router.delete('/:id', authenticateToken, requireRole('admin'), async (req: AuthR
     if (group.users && group.users.length > 0) {
       const userRepo = AppDataSource.getRepository(User);
       for (const user of group.users) {
-        user.groups = user.groups.filter(g => g.id !== group.id);
+        user.groups = user.groups.filter((g: UserGroup) => g.id !== group.id);
         await userRepo.save(user);
       }
     }
@@ -152,11 +153,11 @@ router.post('/:id/users', authenticateToken, requireRole('admin'), async (req: A
       return;
     }
 
-    const users = await userRepo.findByIds(userIds);
+    const users = await userRepo.find({ where: { id: In(userIds) } });
 
     // Add new users to group (avoid duplicates)
-    const existingUserIds = new Set(group.users.map(u => u.id));
-    const newUsers = users.filter(u => !existingUserIds.has(u.id));
+    const existingUserIds = new Set(group.users.map((u: User) => u.id));
+    const newUsers = users.filter((u: User) => !existingUserIds.has(u.id));
 
     group.users = [...group.users, ...newUsers];
     await groupRepo.save(group);
@@ -182,7 +183,7 @@ router.delete('/:id/users/:userId', authenticateToken, requireRole('admin'), asy
       return;
     }
 
-    group.users = group.users.filter(u => u.id !== req.params.userId);
+    group.users = group.users.filter((u: User) => u.id !== req.params.userId);
     await groupRepo.save(group);
 
     res.json(group);

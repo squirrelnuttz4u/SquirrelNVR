@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import bcrypt from 'bcrypt';
+import { In } from 'typeorm';
 import { AppDataSource } from '../database';
 import { User, UserGroup } from '../database/entities';
 import { authenticateToken, requireRole, AuthRequest } from '../middleware/auth';
@@ -97,7 +98,7 @@ router.post('/', authenticateToken, requireRole('admin'), async (req: AuthReques
     // Add groups if provided
     if (groupIds && groupIds.length > 0) {
       const groupRepo = AppDataSource.getRepository(UserGroup);
-      user.groups = await groupRepo.findByIds(groupIds);
+      user.groups = await groupRepo.find({ where: { id: In(groupIds) } });
     }
 
     await userRepo.save(user);
@@ -144,7 +145,7 @@ router.put('/:id', authenticateToken, async (req: AuthRequest, res: Response) =>
       // Update groups
       if (groupIds !== undefined) {
         const groupRepo = AppDataSource.getRepository(UserGroup);
-        user.groups = await groupRepo.findByIds(groupIds);
+        user.groups = await groupRepo.find({ where: { id: In(groupIds) } });
       }
     }
 
