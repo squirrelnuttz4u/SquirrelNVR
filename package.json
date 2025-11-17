@@ -8,9 +8,9 @@
     "dev:server": "nodemon --watch src/server -e ts --exec ts-node src/server/index.ts",
     "dev:client": "cd client && npm run dev",
     "build": "npm run build:server && npm run build:client",
-    "build:server": "tsc -p tsconfig.server.json",
+    "build:server": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc -p tsconfig.server.json",
     "build:client": "cd client && npm run build",
-    "start": "node dist/server/index.js",
+    "start": "node --max-old-space-size=4096 dist/server/index.js",
     "install:service": "node scripts/install-service.js",
     "uninstall:service": "node scripts/uninstall-service.js"
   },
