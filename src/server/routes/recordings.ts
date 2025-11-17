@@ -3,7 +3,7 @@ import { Between, Like } from 'typeorm';
 import { AppDataSource } from '../database';
 import { Recording, Camera } from '../database/entities';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
-import storageManager from '../services/storage';
+import storageManager from '../services/storage/StorageManager.js';
 import logger from '../utils/logger';
 
 const router = Router();
