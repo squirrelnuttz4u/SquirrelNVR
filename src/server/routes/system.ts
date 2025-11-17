@@ -3,7 +3,7 @@ import os from 'os';
 import { AppDataSource } from '../database';
 import { SystemSettings, Camera, Recording, AIDetection } from '../database/entities';
 import { authenticateToken, requireRole, AuthRequest } from '../middleware/auth';
-import storageManager from '../services/storage/StorageManager';
+import storageManager from '../services/storage';
 import notificationService from '../services/notification/NotificationService';
 import logger from '../utils/logger';
 import { MoreThan } from 'typeorm';
