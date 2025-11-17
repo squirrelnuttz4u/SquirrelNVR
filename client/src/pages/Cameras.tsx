@@ -165,6 +165,15 @@ const Cameras: React.FC = () => {
         requiresAuth: true,
         supportsOnvif: true,
       },
+      {
+        vendor: 'Axis',
+        streamType: 'rtsp',
+        defaultPort: 554,
+        streamPath: '/axis-media/media.amp',
+        subStreamPath: '/axis-media/media.amp?resolution=640x480',
+        requiresAuth: true,
+        supportsOnvif: true,
+      },
     ];
     setVendorPresets(presets);
   };
