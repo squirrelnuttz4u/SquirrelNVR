@@ -102,9 +102,10 @@ const Recordings: React.FC = () => {
   const loadCameras = async () => {
     try {
       const data = await api.getCameras();
-      setCameras(data);
+      setCameras(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Failed to load cameras:', error);
+      setCameras([]);
     }
   };
 
@@ -133,10 +134,11 @@ const Recordings: React.FC = () => {
       }
 
       const data = await api.getRecordings(params);
-      setRecordings(data);
+      setRecordings(Array.isArray(data) ? data : []);
     } catch (error: any) {
       console.error('Failed to load recordings:', error);
-      setError(error.response?.data?.error || 'Failed to load recordings');
+      setError(error.response?.data?.error || 'Failed to load recordings. Make sure the backend server is running.');
+      setRecordings([]);
     } finally {
       setLoading(false);
     }
