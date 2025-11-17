@@ -83,10 +83,10 @@ router.put('/settings', authenticateToken, requireRole('admin'), async (req: Aut
     let settings = await settingsRepo.findOne({ where: {} });
 
     if (!settings) {
-      settings = await settingsRepo.save(settingsRepo.create(req.body)) as SystemSettings;
+      settings = await settingsRepo.save(settingsRepo.create(req.body)) as unknown as SystemSettings;
     } else {
       Object.assign(settings, req.body);
-      settings = await settingsRepo.save(settings) as SystemSettings;
+      settings = await settingsRepo.save(settings) as unknown as SystemSettings;
     }
 
     // Reload notification service if email settings changed

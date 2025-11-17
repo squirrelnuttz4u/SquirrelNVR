@@ -57,7 +57,7 @@ router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) =>
 router.post('/', authenticateToken, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   try {
     const cameraRepo = AppDataSource.getRepository(Camera);
-    const camera = await cameraRepo.save(cameraRepo.create(req.body)) as Camera;
+    const camera = await cameraRepo.save(cameraRepo.create(req.body)) as unknown as Camera;
 
     // Start streaming and recording if enabled
     if (camera.enabled) {
