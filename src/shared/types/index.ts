@@ -18,8 +18,10 @@ export enum StreamType {
 export enum RecordingMode {
   CONTINUOUS = 'continuous',
   MOTION = 'motion',
+  AI_DETECTION = 'ai_detection',
   SCHEDULED = 'scheduled',
-  MOTION_AND_SCHEDULED = 'motion_and_scheduled'
+  MOTION_AND_SCHEDULED = 'motion_and_scheduled',
+  MOTION_OR_AI = 'motion_or_ai'
 }
 
 export enum AIProvider {
@@ -89,6 +91,7 @@ export interface Camera {
   aiModels: string[];
   aiSensitivity: number;
   detectionZones?: DetectionZone[];
+  filteredDetectionClasses: string[]; // Only detect these classes (empty = all)
 
   // Schedule
   recordingSchedule?: Schedule[];
@@ -144,7 +147,7 @@ export interface Recording {
   fileSize: number; // bytes
   filePath: string;
   thumbnailPath?: string;
-  recordingType: 'continuous' | 'motion' | 'scheduled' | 'manual';
+  recordingType: 'continuous' | 'motion' | 'scheduled' | 'manual' | 'ai_detection';
   hasAI: boolean;
   hasMotion: boolean;
   createdAt: Date;

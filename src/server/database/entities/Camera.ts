@@ -103,6 +103,9 @@ export class Camera {
   @Column({ type: 'text', nullable: true })
   detectionZones?: string; // JSON
 
+  @Column({ type: 'text', default: '[]' })
+  filteredDetectionClasses!: string; // JSON array - only detect these classes
+
   // Schedule
   @Column({ type: 'text', nullable: true })
   recordingSchedule?: string; // JSON

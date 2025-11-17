@@ -22,6 +22,7 @@ import authRoutes from './routes/auth';
 import cameraRoutes from './routes/cameras';
 import cameraVendorRoutes from './routes/camera-vendors';
 import ptzRoutes from './routes/ptz';
+import aiModelsRoutes from './routes/ai-models';
 import recordingRoutes from './routes/recordings';
 import detectionRoutes from './routes/detections';
 import alarmRoutes from './routes/alarms';
@@ -75,6 +76,7 @@ class SquirrelNVRServer {
     this.app.use('/api/cameras', cameraRoutes);
     this.app.use('/api/camera-vendors', cameraVendorRoutes);
     this.app.use('/api/ptz', ptzRoutes);
+    this.app.use('/api/ai-models', aiModelsRoutes);
     this.app.use('/api/recordings', recordingRoutes);
     this.app.use('/api/detections', detectionRoutes);
     this.app.use('/api/alarms', alarmRoutes);
