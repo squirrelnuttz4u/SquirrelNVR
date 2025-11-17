@@ -15,7 +15,7 @@ import recordingEngine from './services/recording/RecordingEngine';
 import aiDetectionCoordinator from './services/ai/AIDetectionCoordinator';
 import alarmCoordinator from './services/alarm/AlarmCoordinator';
 import notificationService from './services/notification/NotificationService';
-import storageManager from './services/storage/StorageManager';
+import storageManager from './services/storage';
 
 // Import routes
 import authRoutes from './routes/auth';
