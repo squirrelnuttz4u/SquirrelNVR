@@ -213,6 +213,9 @@ class SquirrelNVRServer {
     await aiDetectionCoordinator.initialize();
     await alarmCoordinator.initialize();
 
+    // DISABLED: Auto-starting cameras on server startup
+    // This was causing memory issues. Cameras can be started manually from the UI.
+    /*
     // Start cameras that are enabled
     const cameraRepo = AppDataSource.getRepository(Camera);
     const cameras = await cameraRepo.find({ where: { enabled: true } });
@@ -237,6 +240,7 @@ class SquirrelNVRServer {
         logger.error(`Failed to start camera ${camera.name}:`, error);
       }
     }
+    */
 
     logger.info('✓ All services initialized');
   }
