@@ -5,12 +5,13 @@ Complete guide for installing and configuring SquirrelNVR on Windows with GPU ac
 ## Table of Contents
 
 1. [Prerequisites](#prerequisites)
-2. [Quick Start (Automated)](#quick-start-automated)
-3. [Manual Installation](#manual-installation)
-4. [GPU Acceleration Setup](#gpu-acceleration-setup)
-5. [FFmpeg Installation](#ffmpeg-installation)
-6. [AI Services Setup](#ai-services-setup)
-7. [Troubleshooting](#troubleshooting)
+2. [Recent Updates](#recent-updates)
+3. [Quick Start (Automated)](#quick-start-automated)
+4. [Manual Installation](#manual-installation)
+5. [GPU Acceleration Setup](#gpu-acceleration-setup)
+6. [FFmpeg Installation](#ffmpeg-installation)
+7. [AI Services Setup](#ai-services-setup)
+8. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -40,6 +41,47 @@ Complete guide for installing and configuring SquirrelNVR on Windows with GPU ac
 5. **Frigate** (advanced users)
    - Requires Docker Desktop for Windows
    - See: https://docs.frigate.video/
+
+---
+
+## Recent Updates
+
+### Latest Fixes (Current Build)
+
+**✅ Fixed White Screen Issues**
+- Dashboard, Detections, and other pages now show error messages instead of blank screens
+- Added retry buttons when API calls fail
+- Better error handling prevents crashes when backend is offline
+
+**✅ Fixed Camera Save Issues**
+- Camera vendor, model, and stream URL now save correctly
+- Auto-generation of stream URLs from vendor presets (Reolink, Hikvision, Dahua, Amcrest, Axis)
+- Stream URL properly built from IP address, port, and vendor settings
+
+**✅ Improved Error Handling**
+- User-friendly error messages throughout the UI
+- Clear guidance when backend server isn't running
+- Validation of API responses to prevent runtime errors
+
+**✅ TypeScript Compilation Fixes**
+- All TypeScript errors resolved
+- Proper type annotations added
+- Build process now completes without errors
+
+### What This Means for You
+
+If you were experiencing:
+- **White/blank pages** → Now shows helpful error messages
+- **Camera details not saving** → Now saves vendor, model, and stream URL correctly
+- **Pages crashing** → Now has defensive error handling
+- **Build failures** → TypeScript compilation now works
+
+**To get these fixes:**
+```powershell
+git pull origin claude/nvr-ai-camera-system-01Ls3QubCYnPhhacdMZt4J3Q
+npm run build
+npm start
+```
 
 ---
 
@@ -85,8 +127,10 @@ If you prefer manual installation or the automated script fails:
 
 ### Step 1: Install Dependencies
 
+Open PowerShell or Command Prompt in the SquirrelNVR directory:
+
 ```powershell
-# Install server dependencies
+# Install root/server dependencies
 npm install
 
 # Install client dependencies
@@ -94,6 +138,11 @@ cd client
 npm install
 cd ..
 ```
+
+**Note:** If you get 403 errors from npm registry, you may need to:
+- Check your network/proxy settings
+- Try using a different npm registry: `npm config set registry https://registry.npmjs.org/`
+- Clear npm cache: `npm cache clean --force`
 
 ### Step 2: Create Configuration
 
@@ -104,14 +153,36 @@ copy .env.example .env
 
 Edit `.env` and configure your settings (see [GPU Acceleration](#gpu-acceleration-setup)).
 
+**Important Settings:**
+```env
+# Server
+PORT=3000
+NODE_ENV=production
+
+# Storage
+STORAGE_PATH=C:\SquirrelNVR\recordings
+MAX_STORAGE_GB=500
+
+# GPU (see GPU Acceleration section)
+GPU_TYPE=nvidia
+HARDWARE_ACCEL=cuda
+```
+
 ### Step 3: Build Project
 
+Build both server and client TypeScript code:
+
 ```powershell
-# Build server and client
+# Build everything (recommended)
 npm run build
 ```
 
-Or build separately:
+This will:
+1. ✅ Compile server TypeScript to JavaScript (output: `dist/server/`)
+2. ✅ Compile client TypeScript and bundle with Vite (output: `client/dist/`)
+3. ✅ Check for TypeScript errors
+
+**Build separately if needed:**
 
 ```powershell
 # Build only server
@@ -121,17 +192,93 @@ npm run build:server
 npm run build:client
 ```
 
+**Verify build succeeded:**
+```powershell
+# Check server output
+dir dist\server
+
+# Check client output
+dir client\dist
+```
+
+You should see compiled JavaScript files and the built React application.
+
 ### Step 4: Start Application
 
-```powershell
-# Production mode
-npm start
+**Option A: Production Mode (Recommended)**
 
-# Development mode (auto-reload)
+Runs the built application for best performance:
+
+```powershell
+npm start
+```
+
+This starts:
+- Backend server on http://localhost:3000/api
+- Frontend served from http://localhost:3000
+
+**Option B: Development Mode**
+
+Auto-reloads on file changes (for development only):
+
+```powershell
 npm run dev
 ```
 
-Access the web interface at: http://localhost:3000
+**Option C: Run Server and Client Separately (Advanced)**
+
+Terminal 1 - Backend Server:
+```powershell
+npm run dev:server
+```
+
+Terminal 2 - Frontend Dev Server:
+```powershell
+cd client
+npm run dev
+```
+
+Then access:
+- Frontend: http://localhost:5173 (Vite dev server)
+- Backend API: http://localhost:3000/api
+
+### Step 5: Access Web Interface
+
+Open your browser and navigate to:
+
+```
+http://localhost:3000
+```
+
+**Default Login:**
+- Username: `admin`
+- Password: `admin123`
+
+⚠️ **Important:** Change the default password immediately after first login!
+
+### Step 6: Verify Everything Works
+
+1. **Check Backend:**
+   - Backend logs should show "Server started on port 3000"
+   - No errors about FFmpeg, database, or GPU
+
+2. **Check Frontend:**
+   - Login page should appear (not blank/white screen)
+   - After login, dashboard should load with stats
+
+3. **Add Test Camera:**
+   - Go to Cameras page
+   - Click "Add Camera"
+   - Fill in camera details
+   - Verify camera appears in live view
+
+4. **Check GPU (if configured):**
+   ```powershell
+   # NVIDIA
+   nvidia-smi
+
+   # Should show GPU processes when streaming
+   ```
 
 ---
 
@@ -445,7 +592,7 @@ ffmpeg -encoders | findstr amf
 
 ### Build Failures
 
-**Error:** `npm run build` fails
+**Error:** `npm run build` fails with TypeScript errors
 
 **Common Solutions:**
 ```powershell
@@ -453,12 +600,144 @@ ffmpeg -encoders | findstr amf
 rmdir /s /q node_modules
 rmdir /s /q client\node_modules
 rmdir /s /q dist
+rmdir /s /q client\dist
 npm install
 cd client
 npm install
 cd ..
 npm run build
 ```
+
+**Error:** TypeScript compilation errors in client
+
+If you see errors like:
+- `Cannot find module 'react'`
+- `Cannot find module '@mui/material'`
+- `JSX element implicitly has type 'any'`
+
+**Solution:**
+```powershell
+# Reinstall client dependencies
+cd client
+rmdir /s /q node_modules
+npm install
+cd ..
+npm run build:client
+```
+
+**Error:** TypeScript errors in server
+
+If you see errors like:
+- `Cannot find module 'express'`
+- `Cannot find module 'typeorm'`
+- `Do you need to install type definitions for node?`
+
+**Solution:**
+```powershell
+# Reinstall root dependencies
+rmdir /s /q node_modules
+npm install
+npm run build:server
+```
+
+### White Screen / Blank Pages
+
+**Issue:** Pages flash for a second then go white (Dashboard, Detections, etc.)
+
+**Causes:**
+1. Backend server not running
+2. API connection errors
+3. JavaScript errors in browser console
+
+**Solutions:**
+
+**Step 1: Check Backend is Running**
+```powershell
+# Start the backend if not running
+npm start
+```
+
+Check for error messages in the console. Look for:
+- "Server started on port 3000" ✅ Good
+- Database connection errors ❌ Bad
+- FFmpeg not found ❌ Bad
+
+**Step 2: Check Browser Console**
+1. Open browser DevTools (Press F12)
+2. Go to Console tab
+3. Look for red error messages
+4. Common errors:
+   - `Failed to fetch` - Backend not running
+   - `Network error` - Wrong API URL
+   - `CORS error` - Backend CORS misconfigured
+
+**Step 3: Verify API Connection**
+```powershell
+# Test API endpoint
+curl http://localhost:3000/api/system/stats
+```
+
+Should return JSON data, not an error.
+
+**Step 4: Check Error Messages**
+
+The fixed UI now shows error messages instead of white screens. You should see:
+- Red error alert with retry button
+- Error message explaining the issue
+- "Make sure the backend server is running"
+
+**Recent Fixes Applied:**
+- Dashboard now shows error alerts instead of crashing
+- Detections page validates API responses
+- Better error messages to guide troubleshooting
+
+### Camera Data Not Saving
+
+**Issue:** Camera stream URL, vendor, or model not saving
+
+**Cause:** Fixed in recent update - buildStreamUrl() wasn't being called when saving
+
+**Solution:**
+
+**Step 1: Update to Latest Code**
+```powershell
+git pull origin claude/nvr-ai-camera-system-01Ls3QubCYnPhhacdMZt4J3Q
+npm run build
+npm start
+```
+
+**Step 2: Verify Camera Save Process**
+1. Go to Cameras page
+2. Click "Add Camera"
+3. Fill in REQUIRED fields:
+   - Camera Name ✅
+   - Vendor (select from dropdown) ✅
+   - IP Address ✅
+   - Port (default: 554) ✅
+   - Username/Password (if camera requires) ✅
+
+4. The Stream URL will auto-generate based on vendor preset
+
+**Step 3: Check Saved Camera**
+1. After saving, camera should appear in list
+2. Click Edit on the camera
+3. Verify all fields are populated:
+   - Name ✅
+   - Vendor ✅
+   - Model ✅
+   - Stream URL (should be complete RTSP URL) ✅
+
+**Supported Vendors with Presets:**
+- Reolink
+- Hikvision
+- Dahua
+- Amcrest
+- Axis
+
+**Example Auto-Generated URLs:**
+- Reolink: `rtsp://admin:password@192.168.1.100:554/h264Preview_01_main`
+- Hikvision: `rtsp://admin:password@192.168.1.100:554/Streaming/Channels/101`
+- Axis: `rtsp://admin:password@192.168.1.100:554/axis-media/media.amp`
 
 ### Port Already in Use
 
