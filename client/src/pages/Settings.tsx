@@ -167,7 +167,7 @@ const Settings: React.FC = () => {
   };
 
   const handleChange = (field: string, value: any) => {
-    setSettings((prev) => ({ ...prev, [field]: value }));
+    setSettings((prev: any) => ({ ...prev, [field]: value }));
   };
 
   if (loading) {
