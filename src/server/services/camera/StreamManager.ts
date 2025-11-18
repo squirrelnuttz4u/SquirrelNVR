@@ -44,6 +44,16 @@ export class StreamManager extends EventEmitter {
    * Start streaming from a camera
    */
   async startStream(camera: Camera): Promise<void> {
+    logger.info(`[StreamManager] startStream called for camera: ${camera.name}`);
+    logger.info(`[StreamManager] Camera details:`, {
+      id: camera.id,
+      name: camera.name,
+      streamUrl: camera.streamUrl,
+      streamType: camera.streamType,
+      username: camera.username || 'none',
+      hasPassword: !!camera.password
+    });
+
     if (this.sessions.has(camera.id)) {
       logger.info(`Stream already active for camera ${camera.name}`);
       return;
@@ -66,8 +76,10 @@ export class StreamManager extends EventEmitter {
     };
 
     this.sessions.set(camera.id, session);
+    logger.info(`[StreamManager] Session created and added to sessions map`);
 
     try {
+      logger.info(`[StreamManager] Calling initializeStream...`);
       await this.initializeStream(session);
       // Note: Status will be set to ONLINE by the progress event handler
       // when FFmpeg actually starts receiving data
@@ -75,8 +87,10 @@ export class StreamManager extends EventEmitter {
       logger.info(`Stream initialization complete for camera ${camera.name}`);
     } catch (error) {
       logger.error(`Failed to start stream for camera ${camera.name}:`, error);
+      logger.error(`Error details:`, error instanceof Error ? error.stack : error);
       session.status = CameraStatus.ERROR;
       this.emit('stream:error', camera.id, error);
+      throw error; // Re-throw so caller knows it failed
     }
   }
 

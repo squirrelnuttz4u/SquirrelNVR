@@ -56,25 +56,49 @@ router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) =>
 // Create camera
 router.post('/', authenticateToken, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   try {
+    logger.info('=== Creating new camera ===');
+    logger.info('Camera data received:', JSON.stringify(req.body, null, 2));
+
     const cameraRepo = AppDataSource.getRepository(Camera);
     const camera = await cameraRepo.save(cameraRepo.create(req.body)) as unknown as Camera;
 
+    logger.info(`✓ Camera saved to database: ${camera.name} (ID: ${camera.id})`);
+    logger.info(`  - Stream URL: ${camera.streamUrl}`);
+    logger.info(`  - Username: ${camera.username || 'none'}`);
+    logger.info(`  - Enabled: ${camera.enabled}`);
+    logger.info(`  - Recording Mode: ${camera.recordingMode}`);
+    logger.info(`  - AI Enabled: ${camera.aiEnabled}`);
+
     // Start streaming and recording if enabled
     if (camera.enabled) {
+      logger.info(`Starting services for camera ${camera.name}...`);
+
+      logger.info('→ Starting stream...');
       await streamManager.startStream(camera);
+      logger.info('✓ Stream start initiated');
 
       if (camera.recordingMode === 'continuous') {
+        logger.info('→ Starting continuous recording...');
         await recordingEngine.startRecording(camera);
+        logger.info('✓ Recording started');
       }
 
       if (camera.aiEnabled) {
+        logger.info('→ Starting AI detection...');
         await aiDetectionCoordinator.startDetection(camera);
+        logger.info('✓ AI detection started');
       }
+
+      logger.info(`✓ All services started for camera ${camera.name}`);
+    } else {
+      logger.info(`Camera ${camera.name} is disabled, skipping service startup`);
     }
 
+    logger.info('=== Camera creation complete ===');
     res.status(201).json(camera);
   } catch (error) {
-    logger.error('Error creating camera:', error);
+    logger.error('✗ Error creating camera:', error);
+    logger.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
     res.status(500).json({ error: 'Failed to create camera' });
   }
 });
