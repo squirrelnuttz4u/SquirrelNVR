@@ -69,8 +69,10 @@ export class StreamManager extends EventEmitter {
 
     try {
       await this.initializeStream(session);
-      session.status = CameraStatus.ONLINE;
+      // Note: Status will be set to ONLINE by the progress event handler
+      // when FFmpeg actually starts receiving data
       this.emit('stream:started', camera.id);
+      logger.info(`Stream initialization complete for camera ${camera.name}`);
     } catch (error) {
       logger.error(`Failed to start stream for camera ${camera.name}:`, error);
       session.status = CameraStatus.ERROR;
@@ -88,10 +90,16 @@ export class StreamManager extends EventEmitter {
     // Create HLS directory for this camera
     if (!fs.existsSync(hlsPath)) {
       fs.mkdirSync(hlsPath, { recursive: true });
+      logger.info(`Created HLS directory: ${hlsPath}`);
     }
 
     const playlistPath = path.join(hlsPath, 'playlist.m3u8');
     const streamUrl = this.buildStreamUrl(camera);
+
+    // Log the stream URL (mask password for security)
+    const maskedUrl = streamUrl.replace(/(:\/\/)([^:]+):([^@]+)@/, '$1$2:****@');
+    logger.info(`Stream URL for ${camera.name}: ${maskedUrl}`);
+    logger.info(`HLS playlist will be saved to: ${playlistPath}`);
 
     // Build FFmpeg command
     let command = ffmpeg(streamUrl)
@@ -111,15 +119,21 @@ export class StreamManager extends EventEmitter {
       .outputOptions([
         '-c:v copy', // Copy video codec for low latency
         '-c:a aac', // Audio codec
+        '-ac 1', // Mono audio to reduce processing
+        '-ar 22050', // Lower audio sample rate
         '-f hls',
         '-hls_time 2', // 2 second segments
         '-hls_list_size 10',
         '-hls_flags delete_segments+append_list',
+        '-map 0:v:0', // Map first video stream
+        '-map 0:a:0?', // Map first audio stream if present (optional)
+        '-ignore_unknown', // Ignore unknown streams
         `-hls_segment_filename ${path.join(hlsPath, 'segment_%03d.ts')}`,
       ])
       .output(playlistPath)
       .on('start', (commandLine) => {
-        logger.debug(`FFmpeg command: ${commandLine}`);
+        logger.info(`Starting FFmpeg for camera ${camera.name}`);
+        logger.info(`FFmpeg command: ${commandLine}`);
       })
       .on('progress', (progress) => {
         if (progress.currentFps) {
@@ -128,10 +142,17 @@ export class StreamManager extends EventEmitter {
         if (progress.currentKbps) {
           session.stats.bitrate = progress.currentKbps * 1000;
         }
+        // Log first progress update to confirm stream is working
+        if (session.status === CameraStatus.CONNECTING) {
+          logger.info(`✓ Stream connected for camera ${camera.name} (${progress.currentFps || 0} fps)`);
+          session.status = CameraStatus.ONLINE;
+        }
       })
       .on('error', (err, stdout, stderr) => {
-        logger.error(`FFmpeg error for camera ${camera.name}:`, err.message);
-        logger.debug('FFmpeg stderr:', stderr);
+        logger.error(`✗ FFmpeg error for camera ${camera.name}:`, err.message);
+        if (stderr) {
+          logger.error(`FFmpeg stderr: ${stderr.substring(0, 500)}`);
+        }
         session.status = CameraStatus.ERROR;
         this.emit('stream:error', camera.id, err);
       })
