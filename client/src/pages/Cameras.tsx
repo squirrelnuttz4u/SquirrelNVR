@@ -44,7 +44,7 @@ interface Camera {
   password?: string;
   enabled: boolean;
   recordingMode: string;
-  vendor?: string;
+  manufacturer?: string;
   model?: string;
   aiEnabled: boolean;
   supportsPTZ: boolean;
@@ -189,7 +189,7 @@ const Cameras: React.FC = () => {
         password: camera.password || '',
         enabled: camera.enabled,
         recordingMode: camera.recordingMode,
-        vendor: camera.vendor || '',
+        vendor: camera.manufacturer || '',
         model: camera.model || '',
         ipAddress: '',
         port: '554',
@@ -246,15 +246,15 @@ const Cameras: React.FC = () => {
         name: formData.name,
         streamUrl: finalStreamUrl,
         streamType: formData.streamType,
-        username: formData.username,
-        password: formData.password,
+        username: formData.username || undefined,
+        password: formData.password || undefined,
         enabled: formData.enabled,
         recordingMode: formData.recordingMode,
-        vendor: formData.vendor,
+        manufacturer: formData.vendor, // Map vendor to manufacturer
         model: formData.model,
         aiEnabled: formData.aiEnabled,
         supportsPTZ: formData.supportsPTZ,
-        ptzType: formData.ptzType,
+        ptzType: formData.ptzType || undefined,
         audioEnabled: formData.audioEnabled,
         audioCodec: formData.audioCodec,
         twoWayAudio: formData.twoWayAudio,
@@ -314,11 +314,9 @@ const Cameras: React.FC = () => {
   const buildStreamUrl = () => {
     const preset = vendorPresets.find((p) => p.vendor === formData.vendor);
     if (preset && formData.ipAddress) {
-      const auth = preset.requiresAuth && formData.username
-        ? `${formData.username}:${formData.password}@`
-        : '';
+      // Don't include credentials in URL - backend will add them
       const path = preset.streamPath.replace('{channel}', '1');
-      return `${preset.streamType}://${auth}${formData.ipAddress}:${formData.port}${path}`;
+      return `${preset.streamType}://${formData.ipAddress}:${formData.port}${path}`;
     }
     return formData.streamUrl;
   };
@@ -396,7 +394,7 @@ const Cameras: React.FC = () => {
                       />
                     </Box>
                     <Typography variant="body2" color="text.secondary" gutterBottom>
-                      {camera.vendor} - {camera.streamType.toUpperCase()}
+                      {camera.manufacturer || 'Unknown'} - {camera.streamType.toUpperCase()}
                     </Typography>
                     <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 1 }}>
                       <Chip label={camera.recordingMode} size="small" />
