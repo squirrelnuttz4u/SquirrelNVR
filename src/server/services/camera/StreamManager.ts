@@ -14,6 +14,7 @@ export interface StreamSession {
   status: CameraStatus;
   viewers: number;
   startTime: Date;
+  connectionTimeout?: NodeJS.Timeout;
   stats: {
     fps: number;
     bitrate: number;
@@ -128,22 +129,40 @@ export class StreamManager extends EventEmitter {
     // Add hardware acceleration
     command = this.addHardwareAcceleration(command);
 
+    // Build video filters
+    const videoFilters = this.buildVideoFilters(camera);
+    const hasFilters = videoFilters.length > 0;
+
+    if (hasFilters) {
+      logger.info(`[StreamManager] Applying video filters for ${camera.name}: ${videoFilters.join(', ')}`);
+    }
+
+    // Output options - use encoding if filters are applied, otherwise copy
+    const outputOptions = [
+      hasFilters ? '-c:v libx264' : '-c:v copy', // Encode if filters, otherwise copy
+      '-c:a aac', // Audio codec
+      '-ac 1', // Mono audio to reduce processing
+      '-ar 22050', // Lower audio sample rate
+      '-f hls',
+      '-hls_time 2', // 2 second segments
+      '-hls_list_size 10',
+      '-hls_flags delete_segments+append_list',
+      '-map 0:v:0', // Map first video stream
+      '-map 0:a:0?', // Map first audio stream if present (optional)
+      '-ignore_unknown', // Ignore unknown streams
+      `-hls_segment_filename ${path.join(hlsPath, 'segment_%03d.ts')}`,
+    ];
+
+    // Add encoding options if using filters
+    if (hasFilters) {
+      outputOptions.push('-preset ultrafast'); // Fast encoding
+      outputOptions.push('-tune zerolatency'); // Low latency
+      outputOptions.push(`-vf ${videoFilters.join(',')}`); // Apply filters
+    }
+
     // Output to HLS
     command
-      .outputOptions([
-        '-c:v copy', // Copy video codec for low latency
-        '-c:a aac', // Audio codec
-        '-ac 1', // Mono audio to reduce processing
-        '-ar 22050', // Lower audio sample rate
-        '-f hls',
-        '-hls_time 2', // 2 second segments
-        '-hls_list_size 10',
-        '-hls_flags delete_segments+append_list',
-        '-map 0:v:0', // Map first video stream
-        '-map 0:a:0?', // Map first audio stream if present (optional)
-        '-ignore_unknown', // Ignore unknown streams
-        `-hls_segment_filename ${path.join(hlsPath, 'segment_%03d.ts')}`,
-      ])
+      .outputOptions(outputOptions)
       .output(playlistPath)
       .on('start', (commandLine) => {
         logger.info(`Starting FFmpeg for camera ${camera.name}`);
@@ -160,6 +179,11 @@ export class StreamManager extends EventEmitter {
         if (session.status === CameraStatus.CONNECTING) {
           logger.info(`✓ Stream connected for camera ${camera.name} (${progress.currentFps || 0} fps)`);
           session.status = CameraStatus.ONLINE;
+          // Clear connection timeout since we're now online
+          if (session.connectionTimeout) {
+            clearTimeout(session.connectionTimeout);
+            session.connectionTimeout = undefined;
+          }
         }
       })
       .on('error', (err, stdout, stderr) => {
@@ -182,6 +206,20 @@ export class StreamManager extends EventEmitter {
     try {
       command.run();
       logger.info(`[StreamManager] FFmpeg process launched successfully for camera ${camera.name}`);
+
+      // Set connection timeout - if not ONLINE within 30 seconds, mark as ERROR
+      session.connectionTimeout = setTimeout(() => {
+        if (session.status === CameraStatus.CONNECTING) {
+          logger.error(`[StreamManager] Connection timeout for camera ${camera.name} - failed to connect within 30 seconds`);
+          session.status = CameraStatus.ERROR;
+          this.emit('stream:error', camera.id, new Error('Connection timeout'));
+
+          // Kill the FFmpeg process
+          if (session.ffmpegProcess) {
+            session.ffmpegProcess.kill('SIGKILL');
+          }
+        }
+      }, 30000);
     } catch (error) {
       logger.error(`[StreamManager] Failed to launch FFmpeg for camera ${camera.name}:`, error);
       session.status = CameraStatus.ERROR;
@@ -211,6 +249,41 @@ export class StreamManager extends EventEmitter {
     }
 
     return url;
+  }
+
+  /**
+   * Build video filter string from camera settings
+   */
+  private buildVideoFilters(camera: Camera): string[] {
+    const filters: string[] = [];
+
+    // Rotation
+    if (camera.rotation === 90) {
+      filters.push('transpose=1');
+    } else if (camera.rotation === 180) {
+      filters.push('transpose=1,transpose=1');
+    } else if (camera.rotation === 270) {
+      filters.push('transpose=2');
+    }
+
+    // Flip
+    if (camera.flipHorizontal) {
+      filters.push('hflip');
+    }
+    if (camera.flipVertical) {
+      filters.push('vflip');
+    }
+
+    // Brightness, contrast, saturation (only if not default)
+    const brightness = camera.brightness ?? 1.0;
+    const contrast = camera.contrast ?? 1.0;
+    const saturation = camera.saturation ?? 1.0;
+
+    if (brightness !== 1.0 || contrast !== 1.0 || saturation !== 1.0) {
+      filters.push(`eq=brightness=${brightness - 1}:contrast=${contrast}:saturation=${saturation}`);
+    }
+
+    return filters;
   }
 
   /**
@@ -249,6 +322,12 @@ export class StreamManager extends EventEmitter {
     }
 
     logger.info(`Stopping stream for camera ${session.camera.name}`);
+
+    // Clear connection timeout
+    if (session.connectionTimeout) {
+      clearTimeout(session.connectionTimeout);
+      session.connectionTimeout = undefined;
+    }
 
     if (session.ffmpegProcess) {
       session.ffmpegProcess.kill('SIGKILL');
