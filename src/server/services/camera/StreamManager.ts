@@ -177,7 +177,16 @@ export class StreamManager extends EventEmitter {
       });
 
     session.ffmpegProcess = command;
-    command.run();
+    logger.info(`[StreamManager] Starting FFmpeg process for camera ${camera.name}...`);
+
+    try {
+      command.run();
+      logger.info(`[StreamManager] FFmpeg process launched successfully for camera ${camera.name}`);
+    } catch (error) {
+      logger.error(`[StreamManager] Failed to launch FFmpeg for camera ${camera.name}:`, error);
+      session.status = CameraStatus.ERROR;
+      throw error;
+    }
   }
 
   /**
@@ -260,7 +269,12 @@ export class StreamManager extends EventEmitter {
    */
   getHLSUrl(cameraId: string): string | null {
     const session = this.sessions.get(cameraId);
-    if (!session || session.status !== CameraStatus.ONLINE) {
+    if (!session) {
+      logger.debug(`[StreamManager] getHLSUrl: No session found for camera ${cameraId}`);
+      return null;
+    }
+    if (session.status !== CameraStatus.ONLINE) {
+      logger.debug(`[StreamManager] getHLSUrl: Camera ${cameraId} status is ${session.status}, not ONLINE`);
       return null;
     }
 
