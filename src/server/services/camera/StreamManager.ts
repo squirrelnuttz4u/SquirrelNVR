@@ -248,6 +248,16 @@ export class StreamManager extends EventEmitter {
       }
     }
 
+    // Add codec parameters for Axis cameras if not already present
+    if (camera.streamType === StreamType.RTSP && url.includes('axis-media/media.amp')) {
+      // Check if URL already has parameters
+      if (!url.includes('?')) {
+        // Add h264 codec and resolution parameters for better compatibility
+        url += '?videocodec=h264&resolution=1920x1080';
+        logger.info(`[StreamManager] Added Axis camera parameters: videocodec=h264&resolution=1920x1080`);
+      }
+    }
+
     return url;
   }
 
@@ -437,6 +447,98 @@ export class StreamManager extends EventEmitter {
       session.viewers--;
       this.emit('viewers:changed', cameraId, session.viewers);
     }
+  }
+
+  /**
+   * Test camera connection without starting full stream
+   */
+  async testConnection(camera: Camera): Promise<{ success: boolean; message: string; details?: any }> {
+    logger.info(`[StreamManager] Testing connection for camera: ${camera.name}`);
+
+    const streamUrl = this.buildStreamUrl(camera);
+    const maskedUrl = streamUrl.replace(/(:\/\/)([^:]+):([^@]+)@/, '$1$2:****@');
+    logger.info(`[StreamManager] Testing URL: ${maskedUrl}`);
+
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        logger.error(`[StreamManager] Connection test timeout for ${camera.name}`);
+        resolve({
+          success: false,
+          message: 'Connection timeout - camera not responding after 15 seconds',
+          details: { timeout: true }
+        });
+      }, 15000);
+
+      let errorDetails: any = null;
+
+      const command = ffmpeg(streamUrl)
+        .inputOptions([
+          '-rtsp_transport tcp',
+          '-timeout 5000000',
+          '-stimeout 5000000'
+        ])
+        .outputOptions([
+          '-vframes 1',
+          '-f null'
+        ])
+        .output('-')
+        .on('start', (cmd) => {
+          logger.info(`[StreamManager] Test connection command: ${cmd.substring(0, 200)}...`);
+        })
+        .on('error', (err, stdout, stderr) => {
+          clearTimeout(timeout);
+
+          const errorMsg = err.message || 'Unknown error';
+          logger.error(`[StreamManager] Connection test failed for ${camera.name}:`, errorMsg);
+
+          if (stderr) {
+            logger.error(`[StreamManager] FFmpeg stderr:`, stderr.substring(0, 500));
+          }
+
+          // Parse common errors
+          let message = 'Failed to connect to camera';
+          if (errorMsg.includes('5XX Server Error') || stderr?.includes('5XX Server Error')) {
+            message = 'Camera returned 5XX error - wrong stream path or camera overloaded';
+            errorDetails = { errorType: '5XX', suggestion: 'Try alternative stream paths or reduce camera load' };
+          } else if (errorMsg.includes('401') || errorMsg.includes('Unauthorized')) {
+            message = 'Authentication failed - check username and password';
+            errorDetails = { errorType: 'auth', suggestion: 'Verify camera credentials' };
+          } else if (errorMsg.includes('timed out') || errorMsg.includes('timeout')) {
+            message = 'Connection timeout - camera not reachable';
+            errorDetails = { errorType: 'timeout', suggestion: 'Check camera IP address and network connectivity' };
+          } else if (errorMsg.includes('Connection refused')) {
+            message = 'Connection refused - check port and RTSP is enabled';
+            errorDetails = { errorType: 'refused', suggestion: 'Verify RTSP port and service is running' };
+          }
+
+          resolve({
+            success: false,
+            message,
+            details: { error: errorMsg, stderr: stderr?.substring(0, 200), ...errorDetails }
+          });
+        })
+        .on('end', () => {
+          clearTimeout(timeout);
+          logger.info(`[StreamManager] ✓ Connection test successful for ${camera.name}`);
+          resolve({
+            success: true,
+            message: 'Successfully connected to camera',
+            details: { url: maskedUrl }
+          });
+        });
+
+      try {
+        command.run();
+      } catch (error) {
+        clearTimeout(timeout);
+        logger.error(`[StreamManager] Failed to run connection test:`, error);
+        resolve({
+          success: false,
+          message: 'Failed to start connection test',
+          details: { error: error instanceof Error ? error.message : 'Unknown error' }
+        });
+      }
+    });
   }
 
   /**
