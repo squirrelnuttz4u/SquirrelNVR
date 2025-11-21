@@ -25,6 +25,7 @@ import {
   Alert,
   Tabs,
   Tab,
+  CircularProgress,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -32,6 +33,8 @@ import {
   Delete as DeleteIcon,
   Videocam as VideocamIcon,
   Refresh as RefreshIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
 } from '@mui/icons-material';
 import api from '../services/api';
 
@@ -87,6 +90,8 @@ const Cameras: React.FC = () => {
   const [tabValue, setTabValue] = useState(0);
   const [vendorPresets, setVendorPresets] = useState<VendorPreset[]>([]);
   const [error, setError] = useState<string>('');
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string; details?: any } | null>(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -233,6 +238,41 @@ const Cameras: React.FC = () => {
     setOpenDialog(false);
     setEditingCamera(null);
     setError('');
+    setTestResult(null);
+  };
+
+  const handleTestConnection = async () => {
+    setTestingConnection(true);
+    setTestResult(null);
+    setError('');
+
+    try {
+      // Build the stream URL from vendor preset if applicable
+      const finalStreamUrl = formData.vendor && formData.ipAddress
+        ? buildStreamUrl()
+        : formData.streamUrl;
+
+      const testData = {
+        name: formData.name || 'Test Camera',
+        streamUrl: finalStreamUrl,
+        streamType: formData.streamType,
+        username: formData.username || undefined,
+        password: formData.password || undefined,
+        enabled: true,
+      };
+
+      const result = await api.testCameraConnection(testData);
+      setTestResult(result);
+    } catch (err: any) {
+      const errorData = err.response?.data;
+      setTestResult({
+        success: false,
+        message: errorData?.message || 'Connection test failed',
+        details: errorData?.details || { error: err.message },
+      });
+    } finally {
+      setTestingConnection(false);
+    }
   };
 
   const handleSaveCamera = async () => {
@@ -538,6 +578,56 @@ const Cameras: React.FC = () => {
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                 margin="normal"
               />
+
+              {/* Test Connection Button */}
+              <Box sx={{ mt: 3 }}>
+                <Button
+                  variant="outlined"
+                  onClick={handleTestConnection}
+                  disabled={testingConnection || !formData.streamUrl}
+                  fullWidth
+                  startIcon={testingConnection ? <CircularProgress size={20} /> : undefined}
+                >
+                  {testingConnection ? 'Testing Connection...' : 'Test Connection'}
+                </Button>
+              </Box>
+
+              {/* Test Results */}
+              {testResult && (
+                <Alert
+                  severity={testResult.success ? 'success' : 'error'}
+                  icon={testResult.success ? <CheckCircleIcon /> : <ErrorIcon />}
+                  sx={{ mt: 2 }}
+                >
+                  <Typography variant="subtitle2" gutterBottom>
+                    {testResult.message}
+                  </Typography>
+                  {testResult.details && (
+                    <Box sx={{ mt: 1 }}>
+                      {testResult.details.suggestion && (
+                        <Typography variant="body2" sx={{ mt: 1 }}>
+                          <strong>Suggestion:</strong> {testResult.details.suggestion}
+                        </Typography>
+                      )}
+                      {testResult.details.errorType && (
+                        <Typography variant="body2" sx={{ mt: 0.5 }}>
+                          <strong>Error Type:</strong> {testResult.details.errorType}
+                        </Typography>
+                      )}
+                      {testResult.details.error && (
+                        <Typography variant="caption" sx={{ display: 'block', mt: 1, opacity: 0.8 }}>
+                          Technical Details: {testResult.details.error}
+                        </Typography>
+                      )}
+                      {testResult.details.stderr && (
+                        <Typography variant="caption" sx={{ display: 'block', mt: 0.5, opacity: 0.8 }}>
+                          FFmpeg: {testResult.details.stderr}
+                        </Typography>
+                      )}
+                    </Box>
+                  )}
+                </Alert>
+              )}
             </TabPanel>
 
             {/* Recording Tab */}

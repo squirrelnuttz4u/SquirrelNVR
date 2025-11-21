@@ -80,6 +80,11 @@ class APIClient {
     return `/api/cameras/${id}/snapshot?${Date.now()}`;
   }
 
+  async testCameraConnection(cameraData: any) {
+    const response = await this.client.post('/cameras/test-connection', cameraData);
+    return response.data;
+  }
+
   // Recordings
   async getRecordings(params?: any) {
     const response = await this.client.get('/recordings', { params });
