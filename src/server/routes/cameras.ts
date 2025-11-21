@@ -185,4 +185,56 @@ router.get('/:id/snapshot', authenticateToken, async (req: AuthRequest, res: Res
   }
 });
 
+// Test camera connection
+router.post('/:id/test-connection', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const cameraRepo = AppDataSource.getRepository(Camera);
+    const camera = await cameraRepo.findOne({ where: { id: req.params.id } });
+
+    if (!camera) {
+      res.status(404).json({ error: 'Camera not found' });
+      return;
+    }
+
+    logger.info(`Testing connection for camera: ${camera.name}`);
+    const result = await streamManager.testConnection(camera);
+
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(400).json(result);
+    }
+  } catch (error) {
+    logger.error('Error testing connection:', error);
+    res.status(500).json({ error: 'Failed to test connection' });
+  }
+});
+
+// Test camera connection with provided settings (before saving)
+router.post('/test-connection', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    logger.info('Testing connection with provided camera settings');
+    logger.info('Camera data:', JSON.stringify(req.body, null, 2));
+
+    const cameraRepo = AppDataSource.getRepository(Camera);
+    // Create temporary camera object (not saved to database)
+    const tempCamera = cameraRepo.create(req.body);
+
+    const result = await streamManager.testConnection(tempCamera);
+
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(400).json(result);
+    }
+  } catch (error) {
+    logger.error('Error testing connection:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to test connection',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 export default router;

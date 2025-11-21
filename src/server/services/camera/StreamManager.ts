@@ -14,6 +14,7 @@ export interface StreamSession {
   status: CameraStatus;
   viewers: number;
   startTime: Date;
+  connectionTimeout?: NodeJS.Timeout;
   stats: {
     fps: number;
     bitrate: number;
@@ -128,22 +129,40 @@ export class StreamManager extends EventEmitter {
     // Add hardware acceleration
     command = this.addHardwareAcceleration(command);
 
+    // Build video filters
+    const videoFilters = this.buildVideoFilters(camera);
+    const hasFilters = videoFilters.length > 0;
+
+    if (hasFilters) {
+      logger.info(`[StreamManager] Applying video filters for ${camera.name}: ${videoFilters.join(', ')}`);
+    }
+
+    // Output options - use encoding if filters are applied, otherwise copy
+    const outputOptions = [
+      hasFilters ? '-c:v libx264' : '-c:v copy', // Encode if filters, otherwise copy
+      '-c:a aac', // Audio codec
+      '-ac 1', // Mono audio to reduce processing
+      '-ar 22050', // Lower audio sample rate
+      '-f hls',
+      '-hls_time 2', // 2 second segments
+      '-hls_list_size 10',
+      '-hls_flags delete_segments+append_list',
+      '-map 0:v:0', // Map first video stream
+      '-map 0:a:0?', // Map first audio stream if present (optional)
+      '-ignore_unknown', // Ignore unknown streams
+      `-hls_segment_filename ${path.join(hlsPath, 'segment_%03d.ts')}`,
+    ];
+
+    // Add encoding options if using filters
+    if (hasFilters) {
+      outputOptions.push('-preset ultrafast'); // Fast encoding
+      outputOptions.push('-tune zerolatency'); // Low latency
+      outputOptions.push(`-vf ${videoFilters.join(',')}`); // Apply filters
+    }
+
     // Output to HLS
     command
-      .outputOptions([
-        '-c:v copy', // Copy video codec for low latency
-        '-c:a aac', // Audio codec
-        '-ac 1', // Mono audio to reduce processing
-        '-ar 22050', // Lower audio sample rate
-        '-f hls',
-        '-hls_time 2', // 2 second segments
-        '-hls_list_size 10',
-        '-hls_flags delete_segments+append_list',
-        '-map 0:v:0', // Map first video stream
-        '-map 0:a:0?', // Map first audio stream if present (optional)
-        '-ignore_unknown', // Ignore unknown streams
-        `-hls_segment_filename ${path.join(hlsPath, 'segment_%03d.ts')}`,
-      ])
+      .outputOptions(outputOptions)
       .output(playlistPath)
       .on('start', (commandLine) => {
         logger.info(`Starting FFmpeg for camera ${camera.name}`);
@@ -160,6 +179,11 @@ export class StreamManager extends EventEmitter {
         if (session.status === CameraStatus.CONNECTING) {
           logger.info(`✓ Stream connected for camera ${camera.name} (${progress.currentFps || 0} fps)`);
           session.status = CameraStatus.ONLINE;
+          // Clear connection timeout since we're now online
+          if (session.connectionTimeout) {
+            clearTimeout(session.connectionTimeout);
+            session.connectionTimeout = undefined;
+          }
         }
       })
       .on('error', (err, stdout, stderr) => {
@@ -177,7 +201,30 @@ export class StreamManager extends EventEmitter {
       });
 
     session.ffmpegProcess = command;
-    command.run();
+    logger.info(`[StreamManager] Starting FFmpeg process for camera ${camera.name}...`);
+
+    try {
+      command.run();
+      logger.info(`[StreamManager] FFmpeg process launched successfully for camera ${camera.name}`);
+
+      // Set connection timeout - if not ONLINE within 30 seconds, mark as ERROR
+      session.connectionTimeout = setTimeout(() => {
+        if (session.status === CameraStatus.CONNECTING) {
+          logger.error(`[StreamManager] Connection timeout for camera ${camera.name} - failed to connect within 30 seconds`);
+          session.status = CameraStatus.ERROR;
+          this.emit('stream:error', camera.id, new Error('Connection timeout'));
+
+          // Kill the FFmpeg process
+          if (session.ffmpegProcess) {
+            session.ffmpegProcess.kill('SIGKILL');
+          }
+        }
+      }, 30000);
+    } catch (error) {
+      logger.error(`[StreamManager] Failed to launch FFmpeg for camera ${camera.name}:`, error);
+      session.status = CameraStatus.ERROR;
+      throw error;
+    }
   }
 
   /**
@@ -201,7 +248,52 @@ export class StreamManager extends EventEmitter {
       }
     }
 
+    // Add codec parameters for Axis cameras if not already present
+    if (camera.streamType === StreamType.RTSP && url.includes('axis-media/media.amp')) {
+      // Check if URL already has parameters
+      if (!url.includes('?')) {
+        // Add h264 codec and resolution parameters for better compatibility
+        url += '?videocodec=h264&resolution=1920x1080';
+        logger.info(`[StreamManager] Added Axis camera parameters: videocodec=h264&resolution=1920x1080`);
+      }
+    }
+
     return url;
+  }
+
+  /**
+   * Build video filter string from camera settings
+   */
+  private buildVideoFilters(camera: Camera): string[] {
+    const filters: string[] = [];
+
+    // Rotation
+    if (camera.rotation === 90) {
+      filters.push('transpose=1');
+    } else if (camera.rotation === 180) {
+      filters.push('transpose=1,transpose=1');
+    } else if (camera.rotation === 270) {
+      filters.push('transpose=2');
+    }
+
+    // Flip
+    if (camera.flipHorizontal) {
+      filters.push('hflip');
+    }
+    if (camera.flipVertical) {
+      filters.push('vflip');
+    }
+
+    // Brightness, contrast, saturation (only if not default)
+    const brightness = camera.brightness ?? 1.0;
+    const contrast = camera.contrast ?? 1.0;
+    const saturation = camera.saturation ?? 1.0;
+
+    if (brightness !== 1.0 || contrast !== 1.0 || saturation !== 1.0) {
+      filters.push(`eq=brightness=${brightness - 1}:contrast=${contrast}:saturation=${saturation}`);
+    }
+
+    return filters;
   }
 
   /**
@@ -241,6 +333,12 @@ export class StreamManager extends EventEmitter {
 
     logger.info(`Stopping stream for camera ${session.camera.name}`);
 
+    // Clear connection timeout
+    if (session.connectionTimeout) {
+      clearTimeout(session.connectionTimeout);
+      session.connectionTimeout = undefined;
+    }
+
     if (session.ffmpegProcess) {
       session.ffmpegProcess.kill('SIGKILL');
     }
@@ -260,7 +358,12 @@ export class StreamManager extends EventEmitter {
    */
   getHLSUrl(cameraId: string): string | null {
     const session = this.sessions.get(cameraId);
-    if (!session || session.status !== CameraStatus.ONLINE) {
+    if (!session) {
+      logger.debug(`[StreamManager] getHLSUrl: No session found for camera ${cameraId}`);
+      return null;
+    }
+    if (session.status !== CameraStatus.ONLINE) {
+      logger.debug(`[StreamManager] getHLSUrl: Camera ${cameraId} status is ${session.status}, not ONLINE`);
       return null;
     }
 
@@ -344,6 +447,98 @@ export class StreamManager extends EventEmitter {
       session.viewers--;
       this.emit('viewers:changed', cameraId, session.viewers);
     }
+  }
+
+  /**
+   * Test camera connection without starting full stream
+   */
+  async testConnection(camera: Camera): Promise<{ success: boolean; message: string; details?: any }> {
+    logger.info(`[StreamManager] Testing connection for camera: ${camera.name}`);
+
+    const streamUrl = this.buildStreamUrl(camera);
+    const maskedUrl = streamUrl.replace(/(:\/\/)([^:]+):([^@]+)@/, '$1$2:****@');
+    logger.info(`[StreamManager] Testing URL: ${maskedUrl}`);
+
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        logger.error(`[StreamManager] Connection test timeout for ${camera.name}`);
+        resolve({
+          success: false,
+          message: 'Connection timeout - camera not responding after 15 seconds',
+          details: { timeout: true }
+        });
+      }, 15000);
+
+      let errorDetails: any = null;
+
+      const command = ffmpeg(streamUrl)
+        .inputOptions([
+          '-rtsp_transport tcp',
+          '-timeout 5000000',
+          '-stimeout 5000000'
+        ])
+        .outputOptions([
+          '-vframes 1',
+          '-f null'
+        ])
+        .output('-')
+        .on('start', (cmd) => {
+          logger.info(`[StreamManager] Test connection command: ${cmd.substring(0, 200)}...`);
+        })
+        .on('error', (err, stdout, stderr) => {
+          clearTimeout(timeout);
+
+          const errorMsg = err.message || 'Unknown error';
+          logger.error(`[StreamManager] Connection test failed for ${camera.name}:`, errorMsg);
+
+          if (stderr) {
+            logger.error(`[StreamManager] FFmpeg stderr:`, stderr.substring(0, 500));
+          }
+
+          // Parse common errors
+          let message = 'Failed to connect to camera';
+          if (errorMsg.includes('5XX Server Error') || stderr?.includes('5XX Server Error')) {
+            message = 'Camera returned 5XX error - wrong stream path or camera overloaded';
+            errorDetails = { errorType: '5XX', suggestion: 'Try alternative stream paths or reduce camera load' };
+          } else if (errorMsg.includes('401') || errorMsg.includes('Unauthorized')) {
+            message = 'Authentication failed - check username and password';
+            errorDetails = { errorType: 'auth', suggestion: 'Verify camera credentials' };
+          } else if (errorMsg.includes('timed out') || errorMsg.includes('timeout')) {
+            message = 'Connection timeout - camera not reachable';
+            errorDetails = { errorType: 'timeout', suggestion: 'Check camera IP address and network connectivity' };
+          } else if (errorMsg.includes('Connection refused')) {
+            message = 'Connection refused - check port and RTSP is enabled';
+            errorDetails = { errorType: 'refused', suggestion: 'Verify RTSP port and service is running' };
+          }
+
+          resolve({
+            success: false,
+            message,
+            details: { error: errorMsg, stderr: stderr?.substring(0, 200), ...errorDetails }
+          });
+        })
+        .on('end', () => {
+          clearTimeout(timeout);
+          logger.info(`[StreamManager] ✓ Connection test successful for ${camera.name}`);
+          resolve({
+            success: true,
+            message: 'Successfully connected to camera',
+            details: { url: maskedUrl }
+          });
+        });
+
+      try {
+        command.run();
+      } catch (error) {
+        clearTimeout(timeout);
+        logger.error(`[StreamManager] Failed to run connection test:`, error);
+        resolve({
+          success: false,
+          message: 'Failed to start connection test',
+          details: { error: error instanceof Error ? error.message : 'Unknown error' }
+        });
+      }
+    });
   }
 
   /**

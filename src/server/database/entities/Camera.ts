@@ -110,6 +110,25 @@ export class Camera {
   @Column({ type: 'text', nullable: true })
   recordingSchedule?: string; // JSON
 
+  // Video transformation settings
+  @Column({ default: 0 })
+  rotation!: number; // 0, 90, 180, 270 degrees
+
+  @Column({ default: false })
+  flipHorizontal!: boolean;
+
+  @Column({ default: false })
+  flipVertical!: boolean;
+
+  @Column({ default: 1.0 })
+  brightness!: number; // 0.0 to 2.0, 1.0 is normal
+
+  @Column({ default: 1.0 })
+  contrast!: number; // 0.0 to 2.0, 1.0 is normal
+
+  @Column({ default: 1.0 })
+  saturation!: number; // 0.0 to 2.0, 1.0 is normal
+
   // Storage
   @Column({ default: 30 })
   retentionDays!: number;

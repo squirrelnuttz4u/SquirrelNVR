@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import path from 'path';
+import fs from 'fs';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import config from './config';
@@ -85,8 +86,45 @@ class SquirrelNVRServer {
     // Serve HLS streams
     this.app.get('/stream/hls/:cameraId/*', (req: Request, res: Response) => {
       const { cameraId } = req.params;
-      const filePath = path.join(config.storage.path, 'hls', cameraId, req.params[0]);
-      res.sendFile(filePath);
+      const requestedFile = req.params[0];
+
+      // Validate cameraId format (UUID)
+      if (!cameraId || !cameraId.match(/^[a-f0-9-]{36}$/i)) {
+        logger.warn(`[HLS] Invalid camera ID requested: ${cameraId}`);
+        return res.status(400).json({ error: 'Invalid camera ID' });
+      }
+
+      // Validate requested file
+      if (!requestedFile || !requestedFile.match(/^(playlist\.m3u8|segment_\d{3}\.ts)$/)) {
+        logger.warn(`[HLS] Invalid file requested: ${requestedFile} for camera: ${cameraId}`);
+        return res.status(400).json({ error: 'Invalid file requested' });
+      }
+
+      const filePath = path.join(config.storage.path, 'hls', cameraId, requestedFile);
+
+      // Prevent path traversal
+      const resolvedPath = path.resolve(filePath);
+      const basePath = path.resolve(path.join(config.storage.path, 'hls'));
+      if (!resolvedPath.startsWith(basePath)) {
+        logger.error(`[HLS] Path traversal attempt blocked: ${filePath}`);
+        return res.status(400).json({ error: 'Invalid file path' });
+      }
+
+      // Check if file exists
+      if (!fs.existsSync(filePath)) {
+        logger.debug(`[HLS] File not found: ${requestedFile} for camera: ${cameraId}`);
+        return res.status(404).json({ error: 'Stream file not found - stream may still be initializing' });
+      }
+
+      logger.debug(`[HLS] Serving: ${requestedFile} for camera: ${cameraId}`);
+      res.sendFile(filePath, (err) => {
+        if (err) {
+          logger.error(`[HLS] Error serving file ${requestedFile}:`, err);
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'Error serving stream file' });
+          }
+        }
+      });
     });
 
     // Health check
@@ -213,34 +251,51 @@ class SquirrelNVRServer {
     await aiDetectionCoordinator.initialize();
     await alarmCoordinator.initialize();
 
-    // DISABLED: Auto-starting cameras on server startup
-    // This was causing memory issues. Cameras can be started manually from the UI.
-    /*
-    // Start cameras that are enabled
+    // Auto-start cameras that are enabled with staggered startup to manage memory
     const cameraRepo = AppDataSource.getRepository(Camera);
     const cameras = await cameraRepo.find({ where: { enabled: true } });
 
-    for (const camera of cameras) {
-      try {
-        // Start streaming
-        await streamManager.startStream(camera);
+    if (cameras.length > 0) {
+      logger.info(`[AutoStart] Found ${cameras.length} enabled camera(s) to start`);
 
-        // Start recording if continuous mode
-        if (camera.recordingMode === 'continuous') {
-          await recordingEngine.startRecording(camera);
+      // Start cameras with delay between each to prevent memory spikes
+      const startCameraWithDelay = async (camera: Camera, delayMs: number) => {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        try {
+          logger.info(`[AutoStart] Starting camera: ${camera.name}`);
+
+          // Start streaming
+          await streamManager.startStream(camera);
+
+          // Start recording if continuous mode
+          if (camera.recordingMode === 'continuous') {
+            await recordingEngine.startRecording(camera);
+            logger.info(`[AutoStart] Recording started for: ${camera.name}`);
+          }
+
+          // Start AI detection
+          if (camera.aiEnabled) {
+            await aiDetectionCoordinator.startDetection(camera);
+            logger.info(`[AutoStart] AI detection started for: ${camera.name}`);
+          }
+
+          logger.info(`[AutoStart] ✓ Successfully started camera: ${camera.name}`);
+        } catch (error) {
+          // Log error but don't fail - allow other cameras to start
+          logger.error(`[AutoStart] ✗ Failed to start camera ${camera.name}:`, error);
         }
+      };
 
-        // Start AI detection
-        if (camera.aiEnabled) {
-          await aiDetectionCoordinator.startDetection(camera);
-        }
-
-        logger.info(`✓ Started camera: ${camera.name}`);
-      } catch (error) {
-        logger.error(`Failed to start camera ${camera.name}:`, error);
+      // Start cameras with 2-second delays between each
+      const startupDelay = 2000; // 2 seconds between each camera
+      for (let i = 0; i < cameras.length; i++) {
+        startCameraWithDelay(cameras[i], i * startupDelay);
       }
+
+      logger.info(`[AutoStart] Camera startup initiated (staggered over ${cameras.length * startupDelay / 1000}s)`);
+    } else {
+      logger.info('[AutoStart] No enabled cameras found to start');
     }
-    */
 
     logger.info('✓ All services initialized');
   }
