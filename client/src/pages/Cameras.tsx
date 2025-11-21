@@ -584,7 +584,7 @@ const Cameras: React.FC = () => {
                 <Button
                   variant="outlined"
                   onClick={handleTestConnection}
-                  disabled={testingConnection || !formData.streamUrl}
+                  disabled={testingConnection || (!formData.streamUrl && !(formData.vendor && formData.ipAddress))}
                   fullWidth
                   startIcon={testingConnection ? <CircularProgress size={20} /> : undefined}
                 >
