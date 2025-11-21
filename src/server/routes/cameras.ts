@@ -216,9 +216,16 @@ router.post('/test-connection', authenticateToken, async (req: AuthRequest, res:
     logger.info('Testing connection with provided camera settings');
     logger.info('Camera data:', JSON.stringify(req.body, null, 2));
 
-    const cameraRepo = AppDataSource.getRepository(Camera);
     // Create temporary camera object (not saved to database)
-    const tempCamera = cameraRepo.create(req.body);
+    const tempCamera = {
+      id: 'test-camera',
+      name: req.body.name || 'Test Camera',
+      streamUrl: req.body.streamUrl,
+      streamType: req.body.streamType || 'rtsp',
+      username: req.body.username,
+      password: req.body.password,
+      enabled: true,
+    } as Camera;
 
     const result = await streamManager.testConnection(tempCamera);
 
