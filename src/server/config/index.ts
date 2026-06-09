@@ -1,8 +1,66 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
+import crypto from 'crypto';
 
 // Load environment variables
 dotenv.config();
+
+// Known placeholder/example values that must never be trusted as real secrets
+// (these ship in .env.example, so a large fraction of installs would otherwise
+// run with a publicly known secret).
+const INSECURE_DEFAULTS = new Set([
+  'change-this-secret',
+  'change-this-to-a-random-secret-key',
+  'change-this-to-another-random-secret',
+]);
+
+/**
+ * Resolve a cryptographic secret.
+ *
+ * Order of precedence:
+ *   1. A real value provided via environment variable.
+ *   2. A previously generated value persisted under data/ (so tokens/sessions
+ *      survive restarts).
+ *   3. A freshly generated random value, persisted for reuse.
+ *
+ * This guarantees installs are never silently protected by a public default
+ * secret. A loud warning is emitted in production if a value is missing.
+ */
+function resolveSecret(envValue: string | undefined, fileName: string, label: string): string {
+  if (envValue && !INSECURE_DEFAULTS.has(envValue)) {
+    return envValue;
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    console.warn(
+      `⚠ ${label} is not set (or uses the insecure default). ` +
+      `Generating a persisted random secret. Set ${label} explicitly for multi-instance deployments.`
+    );
+  }
+
+  try {
+    const dataDir = path.join(__dirname, '../../../data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    const secretPath = path.join(dataDir, fileName);
+    if (fs.existsSync(secretPath)) {
+      const existing = fs.readFileSync(secretPath, 'utf8').trim();
+      if (existing) {
+        return existing;
+      }
+    }
+    const generated = crypto.randomBytes(48).toString('hex');
+    fs.writeFileSync(secretPath, generated, { mode: 0o600 });
+    return generated;
+  } catch (error) {
+    // If we cannot persist, fall back to an in-memory random secret. Tokens
+    // will not survive a restart, but the install is still secure.
+    console.warn(`⚠ Could not persist ${label}; using an ephemeral in-memory secret.`, error);
+    return crypto.randomBytes(48).toString('hex');
+  }
+}
 
 export const config = {
   // Server
@@ -55,8 +113,8 @@ export const config = {
 
   // Security
   security: {
-    jwtSecret: process.env.JWT_SECRET || 'change-this-secret',
-    sessionSecret: process.env.SESSION_SECRET || 'change-this-secret',
+    jwtSecret: resolveSecret(process.env.JWT_SECRET, '.jwt-secret', 'JWT_SECRET'),
+    sessionSecret: resolveSecret(process.env.SESSION_SECRET, '.session-secret', 'SESSION_SECRET'),
   },
 
   // GPU

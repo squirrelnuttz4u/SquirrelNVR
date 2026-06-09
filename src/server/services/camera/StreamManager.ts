@@ -7,6 +7,16 @@ import { Camera } from '../../database/entities';
 import { StreamType, CameraStatus } from '../../../shared/types';
 import config from '../../config';
 
+// Allow operators to point at a specific FFmpeg/FFprobe binary. fluent-ffmpeg
+// also honours these env vars implicitly, but setting them explicitly makes
+// the behaviour obvious and works regardless of how the process was launched.
+if (process.env.FFMPEG_PATH) {
+  ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
+}
+if (process.env.FFPROBE_PATH) {
+  ffmpeg.setFfprobePath(process.env.FFPROBE_PATH);
+}
+
 export interface StreamSession {
   cameraId: string;
   camera: Camera;
@@ -38,6 +48,28 @@ export class StreamManager extends EventEmitter {
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
+    });
+  }
+
+  /**
+   * Verify that FFmpeg is installed and reachable. Logs a clear warning rather
+   * than throwing, so the management UI/API stays up even if FFmpeg is missing
+   * (streaming, snapshots and recording simply won't work until it's fixed).
+   */
+  async checkFfmpegAvailable(): Promise<boolean> {
+    return new Promise((resolve) => {
+      ffmpeg.getAvailableFormats((err) => {
+        if (err) {
+          logger.error(
+            '✗ FFmpeg not found or not runnable. Streaming, snapshots and recording will be unavailable. ' +
+            'Install FFmpeg and ensure it is on PATH, or set FFMPEG_PATH/FFPROBE_PATH.'
+          );
+          resolve(false);
+        } else {
+          logger.info('✓ FFmpeg is available');
+          resolve(true);
+        }
+      });
     });
   }
 
@@ -474,8 +506,9 @@ export class StreamManager extends EventEmitter {
       const command = ffmpeg(streamUrl)
         .inputOptions([
           '-rtsp_transport tcp',
-          '-timeout 5000000',
-          '-stimeout 5000000'
+          // Socket I/O timeout in microseconds. (`-stimeout` was removed in
+          // FFmpeg 5+; `-timeout` is the supported option for the RTSP demuxer.)
+          '-timeout 5000000'
         ])
         .outputOptions([
           '-vframes 1',

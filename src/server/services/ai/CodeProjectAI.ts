@@ -43,7 +43,7 @@ export class CodeProjectAIService {
       const response = await this.client.get('/v1/status');
       return response.status === 200;
     } catch (error) {
-      logger.debug('CodeProject.AI server not available:', error);
+      logger.debug(`CodeProject.AI server not available: ${error instanceof Error ? error.message : error}`);
       return false;
     }
   }

@@ -35,15 +35,20 @@ export class NotificationService {
             user: settings.smtpUser,
             pass: settings.smtpPassword,
           } : undefined,
+          // Bound connection attempts so an unreachable SMTP server can never
+          // hang the process (defaults are minutes long).
+          connectionTimeout: 10000,
+          greetingTimeout: 10000,
+          socketTimeout: 15000,
         });
 
-        // Verify connection
-        try {
-          await this.emailTransporter.verify();
-          logger.info('✓ Email service configured and verified');
-        } catch (error) {
-          logger.warn('Email service configured but verification failed:', error);
-        }
+        // Verify the connection in the background. We intentionally do NOT
+        // await this: SMTP verification can take seconds (or time out), and it
+        // must never block or fail server startup.
+        const transporter = this.emailTransporter;
+        transporter.verify()
+          .then(() => logger.info('✓ Email service configured and verified'))
+          .catch((error) => logger.warn('Email service configured but verification failed:', error));
       } else {
         logger.warn('Email service not configured');
       }

@@ -218,7 +218,7 @@ router.post('/test-connection', authenticateToken, async (req: AuthRequest, res:
 
     const cameraRepo = AppDataSource.getRepository(Camera);
     // Create temporary camera object (not saved to database)
-    const tempCamera = cameraRepo.create(req.body);
+    const tempCamera = cameraRepo.create(req.body as Partial<Camera>);
 
     const result = await streamManager.testConnection(tempCamera);
 

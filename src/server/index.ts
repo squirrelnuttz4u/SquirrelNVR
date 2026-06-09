@@ -245,11 +245,30 @@ class SquirrelNVRServer {
     // Initialize database
     await initializeDatabase();
 
-    // Initialize services
+    // Preflight check: warn early (but don't fail) if FFmpeg is missing.
+    await streamManager.checkFfmpegAvailable();
+
+    // Initialize services. Optional/external services (email, AI providers)
+    // must not be able to abort startup if they are unavailable.
     await storageManager.initialize();
-    await notificationService.initialize();
-    await aiDetectionCoordinator.initialize();
-    await alarmCoordinator.initialize();
+
+    try {
+      await notificationService.initialize();
+    } catch (error) {
+      logger.warn('Notification service initialization failed (continuing):', error);
+    }
+
+    try {
+      await aiDetectionCoordinator.initialize();
+    } catch (error) {
+      logger.warn('AI detection initialization failed (continuing):', error);
+    }
+
+    try {
+      await alarmCoordinator.initialize();
+    } catch (error) {
+      logger.warn('Alarm coordinator initialization failed (continuing):', error);
+    }
 
     // Auto-start cameras that are enabled with staggered startup to manage memory
     const cameraRepo = AppDataSource.getRepository(Camera);

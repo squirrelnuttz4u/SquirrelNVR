@@ -26,6 +26,10 @@ data/*.db
 data/*.sqlite
 data/*.sqlite3
 
+# Generated secrets (never commit)
+data/.jwt-secret
+data/.session-secret
+
 # OS
 .DS_Store
 Thumbs.db
