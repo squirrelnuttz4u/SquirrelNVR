@@ -44,23 +44,42 @@ interface Alarm {
   id: string;
   name: string;
   enabled: boolean;
-  type: string;
-  cameraId?: string;
-  conditions: any;
-  actions: any;
+  cameraIds: string; // JSON array
+  triggerOnMotion: boolean;
+  triggerOnAI: boolean;
+  severity: string;
+  sendEmail: boolean;
+  emailRecipients: string; // JSON array
+  sendWebhook: boolean;
+  webhookUrl?: string;
+  sendPush: boolean;
   createdAt: Date;
+}
+
+// Safely parse a JSON-array column that may be a string, array, or empty.
+function parseJsonArray(value: any): string[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string' && value) {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
 }
 
 interface AlarmEvent {
   id: string;
   alarmId: string;
-  alarmName: string;
   cameraId?: string;
-  cameraName?: string;
   message: string;
   severity: string;
   acknowledged: boolean;
-  triggeredAt: Date;
+  timestamp: string;
+  alarm?: { name: string };
+  camera?: { name: string };
 }
 
 interface Camera {
@@ -98,12 +117,14 @@ const Alarms: React.FC = () => {
   const [formData, setFormData] = useState({
     name: '',
     enabled: true,
-    type: 'motion',
-    cameraId: '',
+    type: 'motion', // 'motion' | 'ai_detection' | 'both'
+    cameraId: '', // '' = all cameras
+    severity: 'medium',
     notifyEmail: true,
     emailAddress: '',
     notifyWebhook: false,
     webhookUrl: '',
+    notifyPush: false,
   });
 
   useEffect(() => {
@@ -126,7 +147,8 @@ const Alarms: React.FC = () => {
   const loadAlarmEvents = async () => {
     try {
       const data = await api.getAlarmEvents();
-      setAlarmEvents(data);
+      // The API returns { events, total, ... }; older shapes returned an array.
+      setAlarmEvents(Array.isArray(data) ? data : data?.events || []);
     } catch (err: any) {
       console.error('Failed to load alarm events:', err);
     }
@@ -144,16 +166,23 @@ const Alarms: React.FC = () => {
   const handleOpenDialog = (alarm?: Alarm) => {
     if (alarm) {
       setEditingAlarm(alarm);
-      const actions = alarm.actions || {};
+      const cameraIds = parseJsonArray(alarm.cameraIds);
+      const recipients = parseJsonArray(alarm.emailRecipients);
+      const type = alarm.triggerOnMotion && alarm.triggerOnAI
+        ? 'both'
+        : alarm.triggerOnAI ? 'ai_detection' : 'motion';
       setFormData({
         name: alarm.name,
         enabled: alarm.enabled,
-        type: alarm.type,
-        cameraId: alarm.cameraId || '',
-        notifyEmail: actions.email || false,
-        emailAddress: actions.emailAddress || '',
-        notifyWebhook: actions.webhook || false,
-        webhookUrl: actions.webhookUrl || '',
+        type,
+        // Treat "monitors every camera" as the All Cameras option.
+        cameraId: cameraIds.length === 1 ? cameraIds[0] : '',
+        severity: alarm.severity || 'medium',
+        notifyEmail: alarm.sendEmail || false,
+        emailAddress: recipients[0] || '',
+        notifyWebhook: alarm.sendWebhook || false,
+        webhookUrl: alarm.webhookUrl || '',
+        notifyPush: alarm.sendPush || false,
       });
     } else {
       setEditingAlarm(null);
@@ -162,10 +191,12 @@ const Alarms: React.FC = () => {
         enabled: true,
         type: 'motion',
         cameraId: '',
+        severity: 'medium',
         notifyEmail: true,
         emailAddress: '',
         notifyWebhook: false,
         webhookUrl: '',
+        notifyPush: false,
       });
     }
     setOpenDialog(true);
@@ -179,20 +210,26 @@ const Alarms: React.FC = () => {
 
   const handleSaveAlarm = async () => {
     try {
+      // "All cameras" maps to the full set of current camera ids, since the
+      // backend matches alarms by explicit camera id membership.
+      const cameraIds = formData.cameraId
+        ? [formData.cameraId]
+        : cameras.map((c) => c.id);
+
       const alarmData = {
         name: formData.name,
         enabled: formData.enabled,
-        type: formData.type,
-        cameraId: formData.cameraId || undefined,
-        conditions: {
-          type: formData.type,
-        },
-        actions: {
-          email: formData.notifyEmail,
-          emailAddress: formData.emailAddress,
-          webhook: formData.notifyWebhook,
-          webhookUrl: formData.webhookUrl,
-        },
+        cameraIds: JSON.stringify(cameraIds),
+        triggerOnMotion: formData.type === 'motion' || formData.type === 'both',
+        triggerOnAI: formData.type === 'ai_detection' || formData.type === 'both',
+        severity: formData.severity,
+        sendEmail: formData.notifyEmail,
+        emailRecipients: JSON.stringify(
+          formData.emailAddress ? [formData.emailAddress] : []
+        ),
+        sendWebhook: formData.notifyWebhook,
+        webhookUrl: formData.webhookUrl || undefined,
+        sendPush: formData.notifyPush,
       };
 
       if (editingAlarm) {
@@ -320,16 +357,22 @@ const Alarms: React.FC = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {alarms.map((alarm) => (
+                  {alarms.map((alarm) => {
+                    const alarmCameraIds = parseJsonArray(alarm.cameraIds);
+                    const triggerLabel = alarm.triggerOnMotion && alarm.triggerOnAI
+                      ? 'Motion + AI'
+                      : alarm.triggerOnAI ? 'AI Detection' : 'Motion';
+                    const cameraLabel = alarmCameraIds.length === 1
+                      ? cameras.find((c) => c.id === alarmCameraIds[0])?.name || 'Unknown'
+                      : alarmCameraIds.length === 0 ? 'None' : 'All Cameras';
+                    return (
                     <TableRow key={alarm.id}>
                       <TableCell>{alarm.name}</TableCell>
                       <TableCell>
-                        <Chip label={alarm.type} size="small" />
+                        <Chip label={triggerLabel} size="small" />
                       </TableCell>
                       <TableCell>
-                        {alarm.cameraId
-                          ? cameras.find((c) => c.id === alarm.cameraId)?.name || 'Unknown'
-                          : 'All Cameras'}
+                        {cameraLabel}
                       </TableCell>
                       <TableCell>
                         <Switch
@@ -350,7 +393,8 @@ const Alarms: React.FC = () => {
                         </IconButton>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -386,10 +430,10 @@ const Alarms: React.FC = () => {
                   {alarmEvents.map((event) => (
                     <TableRow key={event.id}>
                       <TableCell>
-                        {format(new Date(event.triggeredAt), 'MMM dd, HH:mm:ss')}
+                        {event.timestamp ? format(new Date(event.timestamp), 'MMM dd, HH:mm:ss') : 'N/A'}
                       </TableCell>
-                      <TableCell>{event.alarmName}</TableCell>
-                      <TableCell>{event.cameraName || 'N/A'}</TableCell>
+                      <TableCell>{event.alarm?.name || 'N/A'}</TableCell>
+                      <TableCell>{event.camera?.name || 'N/A'}</TableCell>
                       <TableCell>{event.message}</TableCell>
                       <TableCell>
                         <Chip
@@ -457,9 +501,20 @@ const Alarms: React.FC = () => {
               >
                 <MenuItem value="motion">Motion Detection</MenuItem>
                 <MenuItem value="ai_detection">AI Detection</MenuItem>
-                <MenuItem value="camera_offline">Camera Offline</MenuItem>
-                <MenuItem value="storage_full">Storage Full</MenuItem>
-                <MenuItem value="system_error">System Error</MenuItem>
+                <MenuItem value="both">Motion + AI Detection</MenuItem>
+              </Select>
+            </FormControl>
+            <FormControl fullWidth margin="normal">
+              <InputLabel>Severity</InputLabel>
+              <Select
+                value={formData.severity}
+                onChange={(e) => setFormData({ ...formData, severity: e.target.value })}
+                label="Severity"
+              >
+                <MenuItem value="low">Low</MenuItem>
+                <MenuItem value="medium">Medium</MenuItem>
+                <MenuItem value="high">High</MenuItem>
+                <MenuItem value="critical">Critical</MenuItem>
               </Select>
             </FormControl>
             <FormControl fullWidth margin="normal">
@@ -530,6 +585,16 @@ const Alarms: React.FC = () => {
                 type="url"
               />
             )}
+
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={formData.notifyPush}
+                  onChange={(e) => setFormData({ ...formData, notifyPush: e.target.checked })}
+                />
+              }
+              label="Push Notification (enrolled devices)"
+            />
           </DialogContent>
           <DialogActions>
             <Button onClick={handleCloseDialog}>Cancel</Button>

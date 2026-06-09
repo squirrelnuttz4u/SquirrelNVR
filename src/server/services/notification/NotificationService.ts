@@ -1,12 +1,17 @@
 import nodemailer, { Transporter } from 'nodemailer';
+import fs from 'fs';
+import path from 'path';
+import webpush from 'web-push';
 import logger from '../../utils/logger';
 import { AppDataSource } from '../../database';
-import { SystemSettings, Alarm, AlarmEvent, Camera } from '../../database/entities';
+import { SystemSettings, Alarm, AlarmEvent, Camera, PushSubscription } from '../../database/entities';
 import { AlarmSeverity } from '../../../shared/types';
 import axios from 'axios';
 
 export class NotificationService {
   private emailTransporter?: Transporter;
+  private vapidPublicKey?: string;
+  private pushReady: boolean = false;
 
   constructor() {}
 
@@ -15,7 +20,105 @@ export class NotificationService {
    */
   async initialize(): Promise<void> {
     await this.loadEmailSettings();
+    this.initializePush();
     logger.info('✓ Notification service initialized');
+  }
+
+  /**
+   * Configure Web Push using VAPID keys. Keys come from the environment, or
+   * are generated once and persisted under data/ so subscriptions remain valid
+   * across restarts.
+   */
+  private initializePush(): void {
+    try {
+      let publicKey = process.env.VAPID_PUBLIC_KEY;
+      let privateKey = process.env.VAPID_PRIVATE_KEY;
+
+      if (!publicKey || !privateKey) {
+        const dataDir = path.join(__dirname, '../../../../data');
+        if (!fs.existsSync(dataDir)) {
+          fs.mkdirSync(dataDir, { recursive: true });
+        }
+        const vapidPath = path.join(dataDir, '.vapid.json');
+
+        if (fs.existsSync(vapidPath)) {
+          const saved = JSON.parse(fs.readFileSync(vapidPath, 'utf8'));
+          publicKey = saved.publicKey;
+          privateKey = saved.privateKey;
+        } else {
+          const keys = webpush.generateVAPIDKeys();
+          publicKey = keys.publicKey;
+          privateKey = keys.privateKey;
+          fs.writeFileSync(vapidPath, JSON.stringify(keys), { mode: 0o600 });
+          logger.info('Generated new VAPID keys for push notifications');
+        }
+      }
+
+      const subject = process.env.VAPID_SUBJECT || 'mailto:admin@squirrelnvr.local';
+      webpush.setVapidDetails(subject, publicKey!, privateKey!);
+      this.vapidPublicKey = publicKey;
+      this.pushReady = true;
+      logger.info('✓ Push notifications configured');
+    } catch (error) {
+      this.pushReady = false;
+      logger.warn('Push notifications unavailable:', error);
+    }
+  }
+
+  /**
+   * The public VAPID key clients need to create a subscription.
+   */
+  getVapidPublicKey(): string | undefined {
+    return this.vapidPublicKey;
+  }
+
+  isPushReady(): boolean {
+    return this.pushReady;
+  }
+
+  /**
+   * Send a push notification to every stored subscription. Subscriptions that
+   * the push service reports as gone (404/410) are pruned.
+   */
+  async sendPush(payload: { title: string; body: string; data?: any }): Promise<number> {
+    if (!this.pushReady) {
+      logger.debug('Push not configured, skipping push notification');
+      return 0;
+    }
+
+    const repo = AppDataSource.getRepository(PushSubscription);
+    const subscriptions = await repo.find();
+    if (subscriptions.length === 0) {
+      return 0;
+    }
+
+    const body = JSON.stringify(payload);
+    let sent = 0;
+
+    await Promise.all(
+      subscriptions.map(async (sub) => {
+        try {
+          await webpush.sendNotification(
+            { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+            body
+          );
+          sent++;
+        } catch (error: any) {
+          const status = error?.statusCode;
+          if (status === 404 || status === 410) {
+            // Subscription no longer valid — remove it.
+            await repo.delete({ id: sub.id });
+          } else {
+            logger.warn(`Failed to send push to ${sub.endpoint.substring(0, 40)}...: ${error?.message || error}`);
+          }
+        }
+      })
+    );
+
+    if (sent > 0) {
+      logger.info(`Sent push notification to ${sent} subscription(s)`);
+    }
+    return sent;
   }
 
   /**
@@ -26,7 +129,7 @@ export class NotificationService {
       const settingsRepo = AppDataSource.getRepository(SystemSettings);
       const settings = await settingsRepo.findOne({ where: {} });
 
-      if (settings && settings.smtpHost) {
+      if (settings && settings.smtpHost && settings.emailEnabled !== false) {
         this.emailTransporter = nodemailer.createTransport({
           host: settings.smtpHost,
           port: settings.smtpPort,
@@ -50,6 +153,9 @@ export class NotificationService {
           .then(() => logger.info('✓ Email service configured and verified'))
           .catch((error) => logger.warn('Email service configured but verification failed:', error));
       } else {
+        // Disabled or unconfigured — ensure any previous transporter is dropped
+        // (e.g. after an admin toggles email off and reloads settings).
+        this.emailTransporter = undefined;
         logger.warn('Email service not configured');
       }
     } catch (error) {
@@ -71,7 +177,7 @@ export class NotificationService {
       const settings = await settingsRepo.findOne({ where: {} });
 
       const mailOptions = {
-        from: settings?.smtpFrom || 'SquirrelNVR <noreply@squirrelnvr.local>',
+        from: settings?.emailFrom || settings?.smtpFrom || 'SquirrelNVR <noreply@squirrelnvr.local>',
         to: to.join(', '),
         subject,
         html,
@@ -98,6 +204,21 @@ export class NotificationService {
         if (recipients.length > 0) {
           await this.sendAlarmEmail(alarm, event, camera, recipients);
         }
+      }
+
+      // Send push notification
+      if (alarm.sendPush) {
+        await this.sendPush({
+          title: `🚨 ${alarm.name}`,
+          body: event.message,
+          data: {
+            alarmId: alarm.id,
+            cameraId: camera.id,
+            eventId: event.id,
+            severity: alarm.severity,
+            url: '/alarms',
+          },
+        });
       }
 
       // Send webhook notification

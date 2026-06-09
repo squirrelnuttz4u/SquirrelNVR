@@ -213,6 +213,27 @@ class APIClient {
     return response.data;
   }
 
+  // Push notifications
+  async getVapidPublicKey(): Promise<string> {
+    const response = await this.client.get('/notifications/vapid-public-key');
+    return response.data.publicKey;
+  }
+
+  async subscribePush(subscription: PushSubscriptionJSON) {
+    const response = await this.client.post('/notifications/subscribe', subscription);
+    return response.data;
+  }
+
+  async unsubscribePush(endpoint: string) {
+    const response = await this.client.post('/notifications/unsubscribe', { endpoint });
+    return response.data;
+  }
+
+  async sendTestPush() {
+    const response = await this.client.post('/notifications/test');
+    return response.data;
+  }
+
   // Streaming
   getHLSUrl(cameraId: string) {
     return `/stream/hls/${cameraId}/playlist.m3u8`;

@@ -5,6 +5,7 @@ import { authenticateToken, requireRole, AuthRequest } from '../middleware/auth'
 import streamManager from '../services/camera/StreamManager';
 import recordingEngine from '../services/recording/RecordingEngine';
 import aiDetectionCoordinator from '../services/ai/AIDetectionCoordinator';
+import motionDetector from '../services/motion/MotionDetector';
 import logger from '../utils/logger';
 
 const router = Router();
@@ -89,6 +90,12 @@ router.post('/', authenticateToken, requireRole('admin'), async (req: AuthReques
         logger.info('✓ AI detection started');
       }
 
+      if (camera.motionEnabled) {
+        logger.info('→ Starting motion detection...');
+        motionDetector.start(camera);
+        logger.info('✓ Motion detection started');
+      }
+
       logger.info(`✓ All services started for camera ${camera.name}`);
     } else {
       logger.info(`Camera ${camera.name} is disabled, skipping service startup`);
@@ -128,10 +135,21 @@ router.put('/:id', authenticateToken, requireRole('admin'), async (req: AuthRequ
       if (camera.aiEnabled) {
         await aiDetectionCoordinator.startDetection(camera);
       }
+      if (camera.motionEnabled) {
+        motionDetector.start(camera);
+      }
     } else if (!camera.enabled && wasEnabled) {
       await streamManager.stopStream(camera.id);
       await recordingEngine.stopRecording(camera.id);
       aiDetectionCoordinator.stopDetection(camera.id);
+      motionDetector.stop(camera.id);
+    } else if (camera.enabled) {
+      // Already enabled: reconcile motion monitoring with the new setting.
+      if (camera.motionEnabled && !motionDetector.isMonitoring(camera.id)) {
+        motionDetector.start(camera);
+      } else if (!camera.motionEnabled && motionDetector.isMonitoring(camera.id)) {
+        motionDetector.stop(camera.id);
+      }
     }
 
     res.json(camera);
@@ -156,6 +174,7 @@ router.delete('/:id', authenticateToken, requireRole('admin'), async (req: AuthR
     await streamManager.stopStream(camera.id);
     await recordingEngine.stopRecording(camera.id);
     aiDetectionCoordinator.stopDetection(camera.id);
+    motionDetector.stop(camera.id);
 
     await cameraRepo.remove(camera);
 

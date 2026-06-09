@@ -49,6 +49,9 @@ export class Alarm {
   @Column({ nullable: true })
   webhookUrl?: string;
 
+  @Column({ default: false })
+  sendPush!: boolean;
+
   @Column({ default: true })
   recordVideo!: boolean;
 

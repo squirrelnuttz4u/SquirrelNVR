@@ -17,6 +17,7 @@ import aiDetectionCoordinator from './services/ai/AIDetectionCoordinator';
 import alarmCoordinator from './services/alarm/AlarmCoordinator';
 import notificationService from './services/notification/NotificationService';
 import storageManager from './services/storage';
+import motionDetector from './services/motion/MotionDetector';
 
 // Import routes
 import authRoutes from './routes/auth';
@@ -28,6 +29,7 @@ import recordingRoutes from './routes/recordings';
 import detectionRoutes from './routes/detections';
 import alarmRoutes from './routes/alarms';
 import systemRoutes from './routes/system';
+import notificationRoutes from './routes/notifications';
 import { Camera } from './database/entities';
 
 class SquirrelNVRServer {
@@ -82,6 +84,7 @@ class SquirrelNVRServer {
     this.app.use('/api/detections', detectionRoutes);
     this.app.use('/api/alarms', alarmRoutes);
     this.app.use('/api/system', systemRoutes);
+    this.app.use('/api/notifications', notificationRoutes);
 
     // Serve HLS streams
     this.app.get('/stream/hls/:cameraId/*', (req: Request, res: Response) => {
@@ -196,6 +199,15 @@ class SquirrelNVRServer {
     alarmCoordinator.on('alarm:triggered', (data) => {
       broadcast('alarm:triggered', data);
     });
+
+    // Motion events drive recording + alarms and are surfaced to the UI.
+    motionDetector.on('motion', (cameraId: string, score: number) => {
+      recordingEngine.onMotionDetected(cameraId);
+      alarmCoordinator.onMotion(cameraId).catch((error) =>
+        logger.error('Error handling motion alarm:', error)
+      );
+      broadcast('motion', { cameraId, score });
+    });
   }
 
   /**
@@ -298,6 +310,12 @@ class SquirrelNVRServer {
             logger.info(`[AutoStart] AI detection started for: ${camera.name}`);
           }
 
+          // Start motion detection
+          if (camera.motionEnabled) {
+            motionDetector.start(camera);
+            logger.info(`[AutoStart] Motion detection started for: ${camera.name}`);
+          }
+
           logger.info(`[AutoStart] ✓ Successfully started camera: ${camera.name}`);
         } catch (error) {
           // Log error but don't fail - allow other cameras to start
@@ -362,6 +380,7 @@ class SquirrelNVRServer {
 
     try {
       // Stop all streams and recordings
+      motionDetector.stopAll();
       await streamManager.stopAll();
       await recordingEngine.stopAll();
       aiDetectionCoordinator.stopAll();

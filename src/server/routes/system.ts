@@ -89,8 +89,12 @@ router.put('/settings', authenticateToken, requireRole('admin'), async (req: Aut
       settings = await settingsRepo.save(settings) as unknown as SystemSettings;
     }
 
-    // Reload notification service if email settings changed
-    if (req.body.smtpHost || req.body.smtpPort || req.body.smtpUser || req.body.smtpPassword) {
+    // Reload notification service if any email setting changed
+    if (
+      'smtpHost' in req.body || 'smtpPort' in req.body || 'smtpUser' in req.body ||
+      'smtpPassword' in req.body || 'smtpSecure' in req.body || 'emailEnabled' in req.body ||
+      'emailFrom' in req.body
+    ) {
       await notificationService.reloadSettings();
     }
 
