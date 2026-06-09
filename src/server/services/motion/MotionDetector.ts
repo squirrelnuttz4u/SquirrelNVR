@@ -205,6 +205,63 @@ export class MotionDetector extends EventEmitter {
   isMonitoring(cameraId: string): boolean {
     return this.sessions.has(cameraId);
   }
+
+  /**
+   * Run a short, one-off analysis and report the scene-change scores observed.
+   * Used by the UI to validate motion detection and help tune sensitivity
+   * without committing to continuous monitoring.
+   */
+  async sampleScore(
+    camera: Camera,
+    durationMs: number = 6000
+  ): Promise<{ maxScore: number; samples: number; threshold: number; wouldTrigger: boolean }> {
+    const sensitivity = Math.min(100, Math.max(0, camera.motionSensitivity ?? 50));
+    const threshold = Math.min(50, Math.max(0.5, (100 - sensitivity) / 10));
+    const url = this.buildUrl(camera);
+
+    return new Promise((resolve) => {
+      let maxScore = 0;
+      let samples = 0;
+      let settled = false;
+
+      const command = ffmpeg(url)
+        .inputOptions(['-rtsp_transport tcp', '-timeout 5000000', `-t ${Math.ceil(durationMs / 1000)}`])
+        .outputOptions(['-an', `-vf fps=${this.fps},scdet=threshold=0,metadata=print`, '-f null'])
+        .output('-')
+        .on('stderr', (line: string) => {
+          const m = line.match(/lavfi\.(?:scd(?:et)?\.score|scene_score)=([0-9]+(?:\.[0-9]+)?)/);
+          if (m) {
+            const score = parseFloat(m[1]);
+            if (Number.isFinite(score)) {
+              samples++;
+              if (score > maxScore) maxScore = score;
+            }
+          }
+        });
+
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve({ maxScore, samples, threshold, wouldTrigger: maxScore >= threshold });
+      };
+
+      command.on('end', finish).on('error', finish);
+
+      // Hard stop slightly after the requested duration as a safety net.
+      const guard = setTimeout(() => {
+        try { command.kill('SIGKILL'); } catch { /* ignore */ }
+        finish();
+      }, durationMs + 4000);
+
+      command.on('end', () => clearTimeout(guard)).on('error', () => clearTimeout(guard));
+
+      try {
+        command.run();
+      } catch {
+        finish();
+      }
+    });
+  }
 }
 
 export default new MotionDetector();

@@ -1,14 +1,27 @@
 import { Router, Response } from 'express';
 import { AppDataSource } from '../database';
-import { Camera } from '../database/entities';
+import { Camera, SystemSettings } from '../database/entities';
 import { authenticateToken, requireRole, AuthRequest } from '../middleware/auth';
 import streamManager from '../services/camera/StreamManager';
+import OnvifService from '../services/camera/OnvifService';
 import recordingEngine from '../services/recording/RecordingEngine';
 import aiDetectionCoordinator from '../services/ai/AIDetectionCoordinator';
 import motionDetector from '../services/motion/MotionDetector';
 import logger from '../utils/logger';
 
 const router = Router();
+
+// Discover ONVIF cameras on the local network (WS-Discovery).
+router.post('/discover', authenticateToken, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const timeout = Math.min(15000, Math.max(2000, Number(req.body?.timeout) || 5000));
+    const devices = await OnvifService.discover(timeout);
+    res.json({ devices });
+  } catch (error) {
+    logger.error('Error during camera discovery:', error);
+    res.status(500).json({ error: 'Camera discovery failed' });
+  }
+});
 
 // Get all cameras
 router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
@@ -21,6 +34,7 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       ...camera,
       isStreaming: streamManager.isStreamActive(camera.id),
       isRecording: recordingEngine.isRecording(camera.id),
+      motionMonitoring: motionDetector.isMonitoring(camera.id),
       viewers: streamManager.getSession(camera.id)?.viewers || 0,
     }));
 
@@ -61,7 +75,30 @@ router.post('/', authenticateToken, requireRole('admin'), async (req: AuthReques
     logger.info('Camera data received:', JSON.stringify(req.body, null, 2));
 
     const cameraRepo = AppDataSource.getRepository(Camera);
-    const camera = await cameraRepo.save(cameraRepo.create(req.body)) as unknown as Camera;
+
+    // Apply system-wide defaults for any fields the client didn't specify.
+    const settingsRepo = AppDataSource.getRepository(SystemSettings);
+    const settings = await settingsRepo.findOne({ where: {} });
+    const body: any = { ...req.body };
+    if (settings) {
+      if (body.recordingMode === undefined && settings.defaultRecordingMode) {
+        body.recordingMode = settings.defaultRecordingMode;
+      }
+      if (body.recordingFps === undefined && settings.defaultFrameRate) {
+        body.recordingFps = settings.defaultFrameRate;
+      }
+      if (body.resolution === undefined && settings.defaultResolution) {
+        body.resolution = settings.defaultResolution;
+      }
+      if (body.aiEnabled === undefined && settings.aiEnabled !== undefined) {
+        body.aiEnabled = settings.aiEnabled;
+      }
+      if (body.aiSensitivity === undefined && settings.aiConfidenceThreshold) {
+        body.aiSensitivity = Math.round(settings.aiConfidenceThreshold * 100);
+      }
+    }
+
+    const camera = await cameraRepo.save(cameraRepo.create(body)) as unknown as Camera;
 
     logger.info(`✓ Camera saved to database: ${camera.name} (ID: ${camera.id})`);
     logger.info(`  - Stream URL: ${camera.streamUrl}`);
@@ -182,6 +219,32 @@ router.delete('/:id', authenticateToken, requireRole('admin'), async (req: AuthR
   } catch (error) {
     logger.error('Error deleting camera:', error);
     res.status(500).json({ error: 'Failed to delete camera' });
+  }
+});
+
+// Test motion detection — runs a short analysis and reports observed scores.
+router.post('/:id/motion/test', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const cameraRepo = AppDataSource.getRepository(Camera);
+    const camera = await cameraRepo.findOne({ where: { id: req.params.id } });
+
+    if (!camera) {
+      res.status(404).json({ error: 'Camera not found' });
+      return;
+    }
+
+    const result = await motionDetector.sampleScore(camera);
+    res.json({
+      ...result,
+      message: result.samples === 0
+        ? 'No frames analyzed — check the camera stream and FFmpeg.'
+        : result.wouldTrigger
+          ? `Motion would trigger (peak ${result.maxScore.toFixed(1)} >= ${result.threshold.toFixed(1)}).`
+          : `No motion above threshold (peak ${result.maxScore.toFixed(1)} < ${result.threshold.toFixed(1)}). Increase sensitivity if needed.`,
+    });
+  } catch (error) {
+    logger.error('Error testing motion detection:', error);
+    res.status(500).json({ error: 'Failed to test motion detection' });
   }
 });
 

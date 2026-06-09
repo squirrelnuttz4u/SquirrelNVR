@@ -85,6 +85,40 @@ class APIClient {
     return response.data;
   }
 
+  async testMotion(id: string) {
+    const response = await this.client.post(`/cameras/${id}/motion/test`);
+    return response.data;
+  }
+
+  async discoverCameras(timeout = 5000) {
+    const response = await this.client.post('/cameras/discover', { timeout }, {
+      timeout: timeout + 10000,
+    });
+    return response.data.devices as Array<{
+      hostname: string;
+      port: number;
+      name?: string;
+      hardware?: string;
+      xaddrs?: string;
+    }>;
+  }
+
+  // PTZ
+  async ptzCommand(cameraId: string, action: string, speed?: number, presetId?: number) {
+    const response = await this.client.post(`/ptz/${cameraId}/command`, { action, speed, presetId });
+    return response.data;
+  }
+
+  async getPtzPresets(cameraId: string) {
+    const response = await this.client.get(`/ptz/${cameraId}/presets`);
+    return response.data.presets;
+  }
+
+  async savePtzPreset(cameraId: string, presetId: number, name?: string) {
+    const response = await this.client.post(`/ptz/${cameraId}/presets`, { presetId, name });
+    return response.data;
+  }
+
   // Recordings
   async getRecordings(params?: any) {
     const response = await this.client.get('/recordings', { params });

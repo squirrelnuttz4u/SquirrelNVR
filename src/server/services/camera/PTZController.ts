@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import logger from '../../utils/logger';
 import { Camera } from '../../database/entities';
 import ReolinkService from './ReolinkService';
+import OnvifService from './OnvifService';
 
 export interface PTZCommand {
   action: 'up' | 'down' | 'left' | 'right' | 'zoomIn' | 'zoomOut' | 'stop' | 'preset';
@@ -19,20 +20,21 @@ export interface PTZPreset {
 
 export class PTZController extends EventEmitter {
   private reolinkServices: Map<string, ReolinkService> = new Map();
+  // Cameras controlled via the generic ONVIF protocol.
+  private onvifCameras: Set<string> = new Set();
 
   /**
    * Initialize PTZ controller for a camera
    */
   async initializeCamera(camera: Camera): Promise<boolean> {
     try {
-      // Check if camera supports PTZ
-      const metadata = camera.model ? JSON.parse(camera.model) : {};
-      if (!metadata.supportsPTZ) {
-        logger.debug(`Camera ${camera.name} does not support PTZ`);
+      // Check if camera supports PTZ (entity flag set by the operator).
+      if (!camera.supportsPTZ) {
+        logger.debug(`Camera ${camera.name} is not marked as PTZ-capable`);
         return false;
       }
 
-      // Initialize based on vendor
+      // Prefer the vendor-native protocol when we have one.
       if (camera.manufacturer?.toLowerCase() === 'reolink') {
         const ip = this.extractIPFromUrl(camera.streamUrl);
         if (ip) {
@@ -41,13 +43,21 @@ export class PTZController extends EventEmitter {
 
           if (connected) {
             this.reolinkServices.set(camera.id, reolink);
-            logger.info(`PTZ initialized for camera ${camera.name}`);
+            logger.info(`PTZ (Reolink) initialized for camera ${camera.name}`);
             return true;
           }
         }
       }
 
-      // Add more PTZ protocols here (ONVIF, HTTP, etc.)
+      // Fall back to generic ONVIF PTZ, which most IP cameras support.
+      try {
+        await OnvifService.connect(camera);
+        this.onvifCameras.add(camera.id);
+        logger.info(`PTZ (ONVIF) initialized for camera ${camera.name}`);
+        return true;
+      } catch (error) {
+        logger.warn(`ONVIF PTZ init failed for ${camera.name}: ${error instanceof Error ? error.message : error}`);
+      }
 
       return false;
     } catch (error) {
@@ -62,12 +72,18 @@ export class PTZController extends EventEmitter {
   async executeCommand(camera: Camera, command: PTZCommand): Promise<boolean> {
     try {
       const reolink = this.reolinkServices.get(camera.id);
-
       if (reolink) {
         return await this.executeReolinkCommand(reolink, command);
       }
 
-      // Add more PTZ protocol handlers here
+      // Lazily initialize ONVIF if the camera is PTZ-capable but not yet set up.
+      if (!this.onvifCameras.has(camera.id) && camera.supportsPTZ) {
+        await this.initializeCamera(camera);
+      }
+
+      if (this.onvifCameras.has(camera.id)) {
+        return await this.executeOnvifCommand(camera, command);
+      }
 
       logger.warn(`No PTZ handler for camera ${camera.name}`);
       return false;
@@ -75,6 +91,44 @@ export class PTZController extends EventEmitter {
       logger.error(`PTZ command failed for camera ${camera.name}:`, error);
       return false;
     }
+  }
+
+  /**
+   * Execute an ONVIF PTZ command.
+   */
+  private async executeOnvifCommand(camera: Camera, command: PTZCommand): Promise<boolean> {
+    // Normalize speed (0-100 from the UI) to ONVIF's -1..1 velocity range.
+    const v = Math.min(1, Math.max(0.1, (command.speed || 50) / 100));
+
+    switch (command.action) {
+      case 'up':
+        await OnvifService.continuousMove(camera, { y: v });
+        break;
+      case 'down':
+        await OnvifService.continuousMove(camera, { y: -v });
+        break;
+      case 'left':
+        await OnvifService.continuousMove(camera, { x: -v });
+        break;
+      case 'right':
+        await OnvifService.continuousMove(camera, { x: v });
+        break;
+      case 'zoomIn':
+        await OnvifService.continuousMove(camera, { zoom: v });
+        break;
+      case 'zoomOut':
+        await OnvifService.continuousMove(camera, { zoom: -v });
+        break;
+      case 'stop':
+        await OnvifService.stop(camera);
+        break;
+      case 'preset':
+        if (command.presetId !== undefined) {
+          await OnvifService.gotoPreset(camera, String(command.presetId));
+        }
+        break;
+    }
+    return true;
   }
 
   /**
@@ -134,6 +188,11 @@ export class PTZController extends EventEmitter {
         return presets;
       }
 
+      if (this.onvifCameras.has(camera.id)) {
+        const onvifPresets = await OnvifService.getPresets(camera);
+        return onvifPresets.map((p, idx) => ({ id: Number(p.token) || idx, name: p.name }));
+      }
+
       return [];
     } catch (error) {
       logger.error('Failed to get PTZ presets:', error);
@@ -150,6 +209,11 @@ export class PTZController extends EventEmitter {
 
       if (reolink) {
         await reolink.setPTZPreset(presetId, name);
+        return true;
+      }
+
+      if (this.onvifCameras.has(camera.id)) {
+        await OnvifService.setPreset(camera, name || `Preset ${presetId}`);
         return true;
       }
 
@@ -198,6 +262,10 @@ export class PTZController extends EventEmitter {
     if (reolink) {
       await reolink.logout();
       this.reolinkServices.delete(cameraId);
+    }
+    if (this.onvifCameras.has(cameraId)) {
+      OnvifService.disconnect(cameraId);
+      this.onvifCameras.delete(cameraId);
     }
   }
 
