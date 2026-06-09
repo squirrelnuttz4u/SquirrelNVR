@@ -257,6 +257,11 @@ export class StorageManager extends EventEmitter {
         fs.unlinkSync(recording.thumbnailPath);
       }
 
+      // Delete pre-roll clip if present
+      if (recording.prerollPath && fs.existsSync(recording.prerollPath)) {
+        fs.unlinkSync(recording.prerollPath);
+      }
+
       // Delete from database
       await recordingRepo.remove(recording);
 

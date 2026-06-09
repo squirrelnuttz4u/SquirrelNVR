@@ -403,6 +403,32 @@ export class StreamManager extends EventEmitter {
   }
 
   /**
+   * Return the most recent HLS segment files for a camera covering roughly
+   * `seconds` of footage, oldest-first. Used to build a pre-event roll without
+   * running a second always-on recorder. Returns [] if the camera isn't
+   * streaming HLS.
+   */
+  getRecentSegments(cameraId: string, seconds: number): string[] {
+    try {
+      const hlsPath = path.join(this.hlsDir, cameraId);
+      if (!fs.existsSync(hlsPath)) {
+        return [];
+      }
+      const segments = fs.readdirSync(hlsPath)
+        .filter((f) => /^segment_\d+\.ts$/.test(f))
+        .map((f) => ({ f, full: path.join(hlsPath, f), mtime: fs.statSync(path.join(hlsPath, f)).mtimeMs }))
+        .sort((a, b) => a.mtime - b.mtime);
+
+      // Segments are ~2s each (see hls_time). Take enough to cover the window.
+      const count = Math.min(segments.length, Math.ceil(seconds / 2) + 1);
+      return segments.slice(segments.length - count).map((s) => s.full);
+    } catch (error) {
+      logger.warn(`[StreamManager] Failed to read recent segments for ${cameraId}:`, error);
+      return [];
+    }
+  }
+
+  /**
    * Capture snapshot from camera
    */
   async captureSnapshot(camera: Camera, outputPath?: string): Promise<string> {

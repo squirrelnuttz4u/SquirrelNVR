@@ -80,6 +80,16 @@ class APIClient {
     return `/api/cameras/${id}/snapshot?${Date.now()}`;
   }
 
+  // Two-way audio: upload a short recorded clip to play on the camera.
+  async talkToCamera(id: string, audio: Blob) {
+    const form = new FormData();
+    form.append('audio', audio, 'talk.webm');
+    const response = await this.client.post(`/cameras/${id}/talk`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  }
+
   async testCameraConnection(cameraData: any) {
     const response = await this.client.post('/cameras/test-connection', cameraData);
     return response.data;

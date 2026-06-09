@@ -32,6 +32,10 @@ export class Recording {
   @Column({ nullable: true })
   thumbnailPath?: string;
 
+  // Optional pre-event roll captured from the live HLS buffer (motion/alarm).
+  @Column({ nullable: true })
+  prerollPath?: string;
+
   @Column()
   recordingType!: string; // continuous, motion, scheduled, manual
 

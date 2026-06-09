@@ -97,6 +97,15 @@ export class RecordingEngine extends EventEmitter {
     try {
       await this.initializeRecording(session);
       this.emit('recording:started', camera.id, recording.id);
+
+      // For event-triggered recordings, capture a pre-roll from the live HLS
+      // buffer so footage leading up to the event isn't lost. Best-effort:
+      // never let this affect the main recording.
+      if (isMotionTriggered && camera.preRecordSeconds > 0) {
+        this.capturePreRoll(camera, recording).catch((err) =>
+          logger.warn(`Pre-roll capture failed for ${camera.name}:`, err)
+        );
+      }
     } catch (error) {
       logger.error(`Failed to start recording for camera ${camera.name}:`, error);
       this.sessions.delete(camera.id);
@@ -165,6 +174,42 @@ export class RecordingEngine extends EventEmitter {
 
     session.ffmpegProcess = command;
     command.run();
+  }
+
+  /**
+   * Capture a pre-event roll by remuxing the most recent buffered HLS segments
+   * into an MP4. Stored alongside the recording as prerollPath.
+   */
+  private async capturePreRoll(camera: Camera, recording: Recording): Promise<void> {
+    const segments = streamManager.getRecentSegments(camera.id, camera.preRecordSeconds);
+    if (segments.length === 0) {
+      logger.debug(`No HLS buffer available for pre-roll on ${camera.name}`);
+      return;
+    }
+
+    const prerollPath = recording.filePath.replace(/\.mp4$/i, '') + '_preroll.mp4';
+    // Build an FFmpeg concat list file referencing the buffered segments.
+    const listPath = prerollPath + '.txt';
+    const listBody = segments.map((s) => `file '${s.replace(/'/g, "'\\''")}'`).join('\n');
+    fs.writeFileSync(listPath, listBody);
+
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg()
+        .input(listPath)
+        .inputOptions(['-f concat', '-safe 0'])
+        .outputOptions(['-c copy', '-movflags +faststart'])
+        .output(prerollPath)
+        .on('end', () => resolve())
+        .on('error', (err) => reject(err))
+        .run();
+    });
+
+    try { fs.unlinkSync(listPath); } catch { /* ignore */ }
+
+    const recordingRepo = AppDataSource.getRepository(Recording);
+    recording.prerollPath = prerollPath;
+    await recordingRepo.save(recording);
+    logger.info(`Pre-roll captured for ${camera.name}: ${prerollPath} (${segments.length} segments)`);
   }
 
   /**

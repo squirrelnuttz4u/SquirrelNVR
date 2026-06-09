@@ -1,4 +1,9 @@
 import { Router, Response } from 'express';
+import multer from 'multer';
+import os from 'os';
+import fs from 'fs';
+import path from 'path';
+import ffmpeg from 'fluent-ffmpeg';
 import { AppDataSource } from '../database';
 import { Camera, SystemSettings } from '../database/entities';
 import { authenticateToken, requireRole, AuthRequest } from '../middleware/auth';
@@ -10,6 +15,20 @@ import motionDetector from '../services/motion/MotionDetector';
 import logger from '../utils/logger';
 
 const router = Router();
+
+// In-memory upload for short push-to-talk audio clips (max 8 MB).
+const audioUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
+
+/**
+ * Build a stream URL with embedded credentials (used for the audio backchannel).
+ */
+function withCredentials(camera: Camera): string {
+  let url = camera.streamUrl;
+  if (camera.username && camera.password && /^(rtsp|rtmp):\/\//.test(url) && !/@/.test(url.split('://')[1] || '')) {
+    url = url.replace(/^(rtsp|rtmp):\/\//, `$1://${camera.username}:${camera.password}@`);
+  }
+  return url;
+}
 
 // Discover ONVIF cameras on the local network (WS-Discovery).
 router.post('/discover', authenticateToken, requireRole('admin'), async (req: AuthRequest, res: Response) => {
@@ -245,6 +264,55 @@ router.post('/:id/motion/test', authenticateToken, async (req: AuthRequest, res:
   } catch (error) {
     logger.error('Error testing motion detection:', error);
     res.status(500).json({ error: 'Failed to test motion detection' });
+  }
+});
+
+// Two-way audio (push-to-talk). Accepts a short audio clip and pushes it to
+// the camera's RTSP audio backchannel via FFmpeg. Requires a camera that
+// supports two-way audio; behaviour varies by vendor.
+router.post('/:id/talk', authenticateToken, audioUpload.single('audio'), async (req: AuthRequest, res: Response) => {
+  let tmpPath: string | undefined;
+  try {
+    const cameraRepo = AppDataSource.getRepository(Camera);
+    const camera = await cameraRepo.findOne({ where: { id: req.params.id } });
+
+    if (!camera) {
+      res.status(404).json({ error: 'Camera not found' });
+      return;
+    }
+    if (!camera.twoWayAudio) {
+      res.status(400).json({ error: 'This camera is not configured for two-way audio' });
+      return;
+    }
+    if (!req.file) {
+      res.status(400).json({ error: 'No audio uploaded' });
+      return;
+    }
+
+    tmpPath = path.join(os.tmpdir(), `talk_${camera.id}_${Date.now()}`);
+    fs.writeFileSync(tmpPath, req.file.buffer);
+    const target = withCredentials(camera);
+    const cleanup = () => { if (tmpPath) { try { fs.unlinkSync(tmpPath); } catch { /* ignore */ } } };
+
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg(tmpPath!)
+        // Transcode to G.711 µ-law, the codec most camera backchannels expect.
+        .outputOptions(['-acodec pcm_mulaw', '-ar 8000', '-ac 1', '-f rtsp', '-rtsp_transport tcp'])
+        .output(target)
+        .on('end', () => resolve())
+        .on('error', (err) => reject(err))
+        .run();
+    });
+
+    cleanup();
+    res.json({ success: true, message: 'Audio sent to camera' });
+  } catch (error) {
+    if (tmpPath) { try { fs.unlinkSync(tmpPath); } catch { /* ignore */ } }
+    logger.error('Two-way audio error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send audio. The camera may not support an RTSP audio backchannel.',
+    });
   }
 });
 
