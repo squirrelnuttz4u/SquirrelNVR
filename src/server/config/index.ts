@@ -68,6 +68,14 @@ export const config = {
   port: parseInt(process.env.PORT || '3000'),
   host: process.env.HOST || '0.0.0.0',
 
+  // HTTPS/TLS (optional). When enabled, the server is served over TLS using
+  // the provided certificate and key.
+  https: {
+    enabled: process.env.ENABLE_HTTPS === 'true',
+    certPath: process.env.SSL_CERT_PATH || '',
+    keyPath: process.env.SSL_KEY_PATH || '',
+  },
+
   // Database
   database: {
     type: process.env.DB_TYPE || 'sqlite',

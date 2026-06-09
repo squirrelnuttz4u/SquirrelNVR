@@ -40,7 +40,7 @@ const logger = winston.createLogger({
  * Agent), and a naive JSON.stringify would throw inside the logger itself —
  * which previously aborted server startup. A logger must never throw.
  */
-function safeStringify(value: unknown): string {
+export function safeStringify(value: unknown): string {
   const seen = new WeakSet<object>();
   try {
     return JSON.stringify(value, (_key, val) => {

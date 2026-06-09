@@ -5,6 +5,7 @@ import compression from 'compression';
 import path from 'path';
 import fs from 'fs';
 import http from 'http';
+import https from 'https';
 import { WebSocketServer, WebSocket } from 'ws';
 import config from './config';
 import logger from './utils/logger';
@@ -40,13 +41,33 @@ class SquirrelNVRServer {
 
   constructor() {
     this.app = express();
-    this.httpServer = http.createServer(this.app);
+    this.httpServer = this.createServer();
     this.wss = new WebSocketServer({ server: this.httpServer });
 
     this.setupMiddleware();
     this.setupRoutes();
     this.setupWebSocket();
     this.setupErrorHandling();
+  }
+
+  /**
+   * Create the underlying HTTP(S) server. Falls back to plain HTTP if HTTPS is
+   * enabled but the certificate/key can't be read, so the server still starts.
+   */
+  private createServer(): http.Server {
+    if (config.https.enabled) {
+      try {
+        const options = {
+          cert: fs.readFileSync(config.https.certPath),
+          key: fs.readFileSync(config.https.keyPath),
+        };
+        logger.info('HTTPS enabled — serving over TLS');
+        return https.createServer(options, this.app);
+      } catch (error) {
+        logger.error('HTTPS enabled but cert/key could not be loaded; falling back to HTTP:', error);
+      }
+    }
+    return http.createServer(this.app);
   }
 
   /**

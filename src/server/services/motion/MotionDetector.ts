@@ -3,6 +3,7 @@ import { EventEmitter } from 'events';
 import logger from '../../utils/logger';
 import { Camera } from '../../database/entities';
 import { StreamType } from '../../../shared/types';
+import { motionThreshold, parseSceneScore } from './motionUtils';
 
 interface MotionSession {
   cameraId: string;
@@ -54,10 +55,9 @@ export class MotionDetector extends EventEmitter {
     }
 
     const sensitivity = Math.min(100, Math.max(0, camera.motionSensitivity ?? 50));
-    // Higher sensitivity => a smaller scene change is enough to trigger.
     // scdet scores are percentages (0-100); typical surveillance motion is a
     // few percent, a full scene cut approaches 100.
-    const threshold = Math.min(50, Math.max(0.5, (100 - sensitivity) / 10));
+    const threshold = motionThreshold(sensitivity);
 
     const session: MotionSession = {
       cameraId: camera.id,
@@ -137,13 +137,8 @@ export class MotionDetector extends EventEmitter {
    * so we match all known variants.
    */
   private parseLine(session: MotionSession, line: string): void {
-    const match = line.match(/lavfi\.(?:scd(?:et)?\.score|scene_score)=([0-9]+(?:\.[0-9]+)?)/);
-    if (!match) {
-      return;
-    }
-
-    const score = parseFloat(match[1]);
-    if (!Number.isFinite(score) || score < session.threshold) {
+    const score = parseSceneScore(line);
+    if (score === null || score < session.threshold) {
       return;
     }
 
@@ -215,8 +210,7 @@ export class MotionDetector extends EventEmitter {
     camera: Camera,
     durationMs: number = 6000
   ): Promise<{ maxScore: number; samples: number; threshold: number; wouldTrigger: boolean }> {
-    const sensitivity = Math.min(100, Math.max(0, camera.motionSensitivity ?? 50));
-    const threshold = Math.min(50, Math.max(0.5, (100 - sensitivity) / 10));
+    const threshold = motionThreshold(camera.motionSensitivity);
     const url = this.buildUrl(camera);
 
     return new Promise((resolve) => {
@@ -229,13 +223,10 @@ export class MotionDetector extends EventEmitter {
         .outputOptions(['-an', `-vf fps=${this.fps},scdet=threshold=0,metadata=print`, '-f null'])
         .output('-')
         .on('stderr', (line: string) => {
-          const m = line.match(/lavfi\.(?:scd(?:et)?\.score|scene_score)=([0-9]+(?:\.[0-9]+)?)/);
-          if (m) {
-            const score = parseFloat(m[1]);
-            if (Number.isFinite(score)) {
-              samples++;
-              if (score > maxScore) maxScore = score;
-            }
+          const score = parseSceneScore(line);
+          if (score !== null) {
+            samples++;
+            if (score > maxScore) maxScore = score;
           }
         });
 

@@ -11,6 +11,11 @@
     "build:server": "node --max-old-space-size=8192 ./node_modules/typescript/bin/tsc -p tsconfig.server.json",
     "build:client": "cd client && node --max-old-space-size=8192 ./node_modules/vite/bin/vite.js build",
     "start": "node --max-old-space-size=4096 dist/server/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/server/database/index.ts",
+    "migration:run": "typeorm-ts-node-commonjs migration:run -d src/server/database/index.ts",
+    "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/server/database/index.ts",
     "install:service": "node scripts/install-service.js",
     "uninstall:service": "node scripts/uninstall-service.js"
   },
@@ -66,7 +71,8 @@
     "concurrently": "^8.2.2",
     "nodemon": "^3.0.2",
     "ts-node": "^10.9.2",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "^2.1.9"
   },
   "engines": {
     "node": ">=18.0.0",

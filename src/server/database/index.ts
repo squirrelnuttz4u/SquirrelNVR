@@ -17,7 +17,13 @@ export const AppDataSource = new DataSource({
   }),
 
   entities: Object.values(entities),
-  synchronize: true, // Set to false in production, use migrations
+  // Auto-sync the schema by default (zero-config first run). For production
+  // with managed schema changes, set DB_SYNCHRONIZE=false and use migrations.
+  synchronize: process.env.DB_SYNCHRONIZE
+    ? process.env.DB_SYNCHRONIZE === 'true'
+    : true,
+  migrations: [path.join(__dirname, 'migrations', '*.{js,ts}')],
+  migrationsRun: process.env.DB_RUN_MIGRATIONS === 'true',
   logging: process.env.NODE_ENV === 'development',
 });
 
