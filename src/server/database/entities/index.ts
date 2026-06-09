@@ -7,3 +7,4 @@ export { AlarmEvent } from './AlarmEvent';
 export { SystemSettings } from './SystemSettings';
 export { User } from './User';
 export { UserGroup } from './UserGroup';
+export { PushSubscription } from './PushSubscription';

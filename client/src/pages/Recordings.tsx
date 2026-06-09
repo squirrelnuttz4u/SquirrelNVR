@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   Grid,
   Card,
@@ -33,6 +33,8 @@ import {
   ContentCut,
   CheckBox,
   CheckBoxOutlineBlank,
+  Replay10,
+  Forward10,
 } from '@mui/icons-material';
 import Layout from '../components/Layout';
 import api from '../services/api';
@@ -76,6 +78,21 @@ const Recordings: React.FC = () => {
   // Playback dialog
   const [playbackDialog, setPlaybackDialog] = useState(false);
   const [selectedRecording, setSelectedRecording] = useState<Recording | null>(null);
+  const playbackVideoRef = useRef<HTMLVideoElement>(null);
+  const [playbackPosition, setPlaybackPosition] = useState(0);
+  const [playbackDuration, setPlaybackDuration] = useState(0);
+
+  const seekTo = (seconds: number) => {
+    const v = playbackVideoRef.current;
+    if (!v) return;
+    const max = playbackDuration || v.duration || 0;
+    v.currentTime = Math.min(Math.max(0, seconds), max);
+  };
+
+  const skip = (delta: number) => {
+    const v = playbackVideoRef.current;
+    if (v) seekTo(v.currentTime + delta);
+  };
 
   // Delete confirmation
   const [deleteDialog, setDeleteDialog] = useState(false);
@@ -146,6 +163,8 @@ const Recordings: React.FC = () => {
 
   const handlePlayback = (recording: Recording) => {
     setSelectedRecording(recording);
+    setPlaybackPosition(0);
+    setPlaybackDuration(recording.duration || 0);
     setPlaybackDialog(true);
   };
 
@@ -606,13 +625,57 @@ const Recordings: React.FC = () => {
             {selectedRecording && (
               <Box>
                 <video
+                  ref={playbackVideoRef}
                   controls
                   autoPlay
                   style={{ width: '100%', maxHeight: '70vh', backgroundColor: '#000' }}
                   src={api.getRecordingVideoUrl(selectedRecording.id)}
+                  onTimeUpdate={(e) => setPlaybackPosition((e.target as HTMLVideoElement).currentTime)}
+                  onLoadedMetadata={(e) => {
+                    const d = (e.target as HTMLVideoElement).duration;
+                    if (Number.isFinite(d) && d > 0) setPlaybackDuration(d);
+                  }}
                 >
                   Your browser does not support video playback.
                 </video>
+
+                {/* Timeline scrubber with absolute timestamps */}
+                <Box sx={{ mt: 1, px: 1 }}>
+                  <Slider
+                    value={Math.min(playbackPosition, playbackDuration || 0)}
+                    min={0}
+                    max={playbackDuration || selectedRecording.duration || 1}
+                    step={0.1}
+                    onChange={(_, value) => seekTo(value as number)}
+                    valueLabelDisplay="auto"
+                    valueLabelFormat={(value) =>
+                      format(
+                        new Date(new Date(selectedRecording.startTime).getTime() + value * 1000),
+                        'HH:mm:ss'
+                      )
+                    }
+                  />
+                  <Box display="flex" justifyContent="space-between" alignItems="center">
+                    <Typography variant="caption" color="text.secondary">
+                      {format(new Date(selectedRecording.startTime), 'HH:mm:ss')}
+                    </Typography>
+                    <Box display="flex" alignItems="center" gap={1}>
+                      <IconButton size="small" onClick={() => skip(-10)} title="Back 10s">
+                        <Replay10 fontSize="small" />
+                      </IconButton>
+                      <Typography variant="caption" color="text.secondary">
+                        {formatDuration(Math.floor(playbackPosition))} /{' '}
+                        {formatDuration(Math.floor(playbackDuration || selectedRecording.duration))}
+                      </Typography>
+                      <IconButton size="small" onClick={() => skip(10)} title="Forward 10s">
+                        <Forward10 fontSize="small" />
+                      </IconButton>
+                    </Box>
+                    <Typography variant="caption" color="text.secondary">
+                      {format(new Date(selectedRecording.endTime), 'HH:mm:ss')}
+                    </Typography>
+                  </Box>
+                </Box>
 
                 <Box sx={{ mt: 2 }}>
                   <Grid container spacing={2}>

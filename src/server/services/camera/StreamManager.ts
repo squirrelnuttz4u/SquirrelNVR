@@ -7,6 +7,16 @@ import { Camera } from '../../database/entities';
 import { StreamType, CameraStatus } from '../../../shared/types';
 import config from '../../config';
 
+// Allow operators to point at a specific FFmpeg/FFprobe binary. fluent-ffmpeg
+// also honours these env vars implicitly, but setting them explicitly makes
+// the behaviour obvious and works regardless of how the process was launched.
+if (process.env.FFMPEG_PATH) {
+  ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
+}
+if (process.env.FFPROBE_PATH) {
+  ffmpeg.setFfprobePath(process.env.FFPROBE_PATH);
+}
+
 export interface StreamSession {
   cameraId: string;
   camera: Camera;
@@ -38,6 +48,28 @@ export class StreamManager extends EventEmitter {
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
+    });
+  }
+
+  /**
+   * Verify that FFmpeg is installed and reachable. Logs a clear warning rather
+   * than throwing, so the management UI/API stays up even if FFmpeg is missing
+   * (streaming, snapshots and recording simply won't work until it's fixed).
+   */
+  async checkFfmpegAvailable(): Promise<boolean> {
+    return new Promise((resolve) => {
+      ffmpeg.getAvailableFormats((err) => {
+        if (err) {
+          logger.error(
+            '✗ FFmpeg not found or not runnable. Streaming, snapshots and recording will be unavailable. ' +
+            'Install FFmpeg and ensure it is on PATH, or set FFMPEG_PATH/FFPROBE_PATH.'
+          );
+          resolve(false);
+        } else {
+          logger.info('✓ FFmpeg is available');
+          resolve(true);
+        }
+      });
     });
   }
 
@@ -371,6 +403,32 @@ export class StreamManager extends EventEmitter {
   }
 
   /**
+   * Return the most recent HLS segment files for a camera covering roughly
+   * `seconds` of footage, oldest-first. Used to build a pre-event roll without
+   * running a second always-on recorder. Returns [] if the camera isn't
+   * streaming HLS.
+   */
+  getRecentSegments(cameraId: string, seconds: number): string[] {
+    try {
+      const hlsPath = path.join(this.hlsDir, cameraId);
+      if (!fs.existsSync(hlsPath)) {
+        return [];
+      }
+      const segments = fs.readdirSync(hlsPath)
+        .filter((f) => /^segment_\d+\.ts$/.test(f))
+        .map((f) => ({ f, full: path.join(hlsPath, f), mtime: fs.statSync(path.join(hlsPath, f)).mtimeMs }))
+        .sort((a, b) => a.mtime - b.mtime);
+
+      // Segments are ~2s each (see hls_time). Take enough to cover the window.
+      const count = Math.min(segments.length, Math.ceil(seconds / 2) + 1);
+      return segments.slice(segments.length - count).map((s) => s.full);
+    } catch (error) {
+      logger.warn(`[StreamManager] Failed to read recent segments for ${cameraId}:`, error);
+      return [];
+    }
+  }
+
+  /**
    * Capture snapshot from camera
    */
   async captureSnapshot(camera: Camera, outputPath?: string): Promise<string> {
@@ -474,8 +532,9 @@ export class StreamManager extends EventEmitter {
       const command = ffmpeg(streamUrl)
         .inputOptions([
           '-rtsp_transport tcp',
-          '-timeout 5000000',
-          '-stimeout 5000000'
+          // Socket I/O timeout in microseconds. (`-stimeout` was removed in
+          // FFmpeg 5+; `-timeout` is the supported option for the RTSP demuxer.)
+          '-timeout 5000000'
         ])
         .outputOptions([
           '-vframes 1',

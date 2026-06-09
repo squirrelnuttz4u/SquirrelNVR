@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import rateLimit from 'express-rate-limit';
 import { AppDataSource } from '../database';
 import { User } from '../database/entities';
 import config from '../config';
@@ -8,8 +9,19 @@ import { authenticateToken, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 
+// Throttle authentication attempts to mitigate brute-force / credential
+// stuffing. Counts only failed attempts so legitimate logins aren't penalized.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: { error: 'Too many login attempts, please try again later' },
+});
+
 // Login
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', loginLimiter, async (req: Request, res: Response) => {
   try {
     const { username, password } = req.body;
 

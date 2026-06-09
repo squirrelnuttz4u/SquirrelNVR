@@ -29,13 +29,8 @@ export class AlarmCoordinator extends EventEmitter {
       await this.handleDetection(data.cameraId, data.detection);
     });
 
-    // Listen to motion detection events
-    recordingEngine.on('recording:started', async (cameraId, recordingId) => {
-      const session = recordingEngine.getSession(cameraId);
-      if (session?.isMotionTriggered) {
-        await this.handleMotionDetection(cameraId);
-      }
-    });
+    // Motion events are delivered via onMotion() (wired from the motion
+    // detector at the server level) rather than inferred from recording state.
 
     this.isInitialized = true;
     logger.info('✓ Alarm coordinator initialized');
@@ -83,6 +78,13 @@ export class AlarmCoordinator extends EventEmitter {
     } catch (error) {
       logger.error('Error handling AI detection for alarms:', error);
     }
+  }
+
+  /**
+   * Entry point for motion events from the motion detector.
+   */
+  async onMotion(cameraId: string): Promise<void> {
+    await this.handleMotionDetection(cameraId);
   }
 
   /**

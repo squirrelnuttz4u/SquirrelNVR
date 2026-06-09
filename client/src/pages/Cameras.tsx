@@ -26,6 +26,9 @@ import {
   Tabs,
   Tab,
   CircularProgress,
+  List,
+  ListItem,
+  ListItemText,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -35,6 +38,7 @@ import {
   Refresh as RefreshIcon,
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
+  Search as SearchIcon,
 } from '@mui/icons-material';
 import api from '../services/api';
 
@@ -92,6 +96,30 @@ const Cameras: React.FC = () => {
   const [error, setError] = useState<string>('');
   const [testingConnection, setTestingConnection] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; details?: any } | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoverOpen, setDiscoverOpen] = useState(false);
+  const [discovered, setDiscovered] = useState<Array<{ hostname: string; port: number; name?: string; hardware?: string }>>([]);
+
+  const handleDiscover = async () => {
+    setDiscovering(true);
+    setDiscoverOpen(true);
+    setDiscovered([]);
+    try {
+      const devices = await api.discoverCameras(6000);
+      setDiscovered(devices || []);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Camera discovery failed');
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const handleUseDiscovered = (device: { hostname: string }) => {
+    setDiscoverOpen(false);
+    handleOpenDialog();
+    // Prefill the IP address so the vendor preset can build the stream URL.
+    setFormData((prev: any) => ({ ...prev, ipAddress: device.hostname }));
+  };
 
   // Form state
   const [formData, setFormData] = useState({
@@ -371,6 +399,14 @@ const Cameras: React.FC = () => {
               <RefreshIcon />
             </IconButton>
             <Button
+              variant="outlined"
+              startIcon={<SearchIcon />}
+              onClick={handleDiscover}
+              sx={{ mr: 1 }}
+            >
+              Scan Network
+            </Button>
+            <Button
               variant="contained"
               startIcon={<AddIcon />}
               onClick={() => handleOpenDialog()}
@@ -379,6 +415,44 @@ const Cameras: React.FC = () => {
             </Button>
           </Box>
         </Box>
+
+        {/* ONVIF discovery results */}
+        <Dialog open={discoverOpen} onClose={() => setDiscoverOpen(false)} maxWidth="sm" fullWidth>
+          <DialogTitle>Discovered Cameras (ONVIF)</DialogTitle>
+          <DialogContent>
+            {discovering ? (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, py: 2 }}>
+                <CircularProgress size={24} /> Scanning the local network…
+              </Box>
+            ) : discovered.length === 0 ? (
+              <Alert severity="info">
+                No ONVIF cameras found. Ensure cameras are on the same network and ONVIF is enabled.
+              </Alert>
+            ) : (
+              <List>
+                {discovered.map((d, i) => (
+                  <ListItem
+                    key={`${d.hostname}:${d.port}:${i}`}
+                    secondaryAction={
+                      <Button size="small" variant="outlined" onClick={() => handleUseDiscovered(d)}>
+                        Add
+                      </Button>
+                    }
+                  >
+                    <ListItemText
+                      primary={d.name || d.hostname}
+                      secondary={`${d.hostname}:${d.port}${d.hardware ? ` · ${d.hardware}` : ''}`}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setDiscoverOpen(false)}>Close</Button>
+            <Button onClick={handleDiscover} disabled={discovering}>Rescan</Button>
+          </DialogActions>
+        </Dialog>
 
         {error && (
           <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>

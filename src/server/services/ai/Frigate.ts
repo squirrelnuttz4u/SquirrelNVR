@@ -142,7 +142,7 @@ export class FrigateService extends EventEmitter {
       const response = await this.httpClient.get('/api/stats');
       return response.status === 200;
     } catch (error) {
-      logger.debug('Frigate server not available:', error);
+      logger.debug(`Frigate server not available: ${error instanceof Error ? error.message : error}`);
       return false;
     }
   }

@@ -25,6 +25,7 @@ import {
 } from '@mui/icons-material';
 import Layout from '../components/Layout';
 import api from '../services/api';
+import { isPushSupported, getPushStatus, enablePush, disablePush } from '../services/push';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -87,11 +88,49 @@ const Settings: React.FC = () => {
   });
 
   const [storageStats, setStorageStats] = useState<any>(null);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const pushSupported = isPushSupported();
 
   useEffect(() => {
     loadSettings();
     loadStorageStats();
-  }, []);
+    if (pushSupported) {
+      getPushStatus().then(setPushEnabled).catch(() => setPushEnabled(false));
+    }
+  }, [pushSupported]);
+
+  const handleTogglePush = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      if (pushEnabled) {
+        await disablePush();
+        setPushEnabled(false);
+        setSuccess('Push notifications disabled on this device');
+      } else {
+        await enablePush();
+        setPushEnabled(true);
+        setSuccess('Push notifications enabled on this device');
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Failed to update push notifications');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTestPush = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await api.sendTestPush();
+      setSuccess(result?.message || 'Test push sent');
+    } catch (e: any) {
+      setError(e?.response?.data?.error || 'Failed to send test push');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const loadSettings = async () => {
     setLoading(true);
@@ -280,9 +319,16 @@ const Settings: React.FC = () => {
 
           {storageStats && (
             <Alert severity="info" sx={{ mb: 3 }}>
-              Current Storage: {storageStats.usedGB?.toFixed(2)} GB /{' '}
+              Recordings budget: {storageStats.usedGB?.toFixed(2)} GB /{' '}
               {storageStats.totalGB} GB ({storageStats.usagePercent?.toFixed(1)}% used)
               <br />
+              {storageStats.diskTotalGB > 0 && (
+                <>
+                  Physical disk: {storageStats.diskFreeGB?.toFixed(1)} GB free of{' '}
+                  {storageStats.diskTotalGB?.toFixed(1)} GB ({storageStats.diskUsedPercent?.toFixed(1)}% used)
+                  <br />
+                </>
+              )}
               Recordings: {storageStats.recordingsCount || 0}
             </Alert>
           )}
@@ -447,6 +493,43 @@ const Settings: React.FC = () => {
               <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
                 Send a test email to verify SMTP settings
               </Typography>
+            </Grid>
+
+            {/* Push notifications (per-device) */}
+            <Grid item xs={12}>
+              <Divider sx={{ my: 2 }} />
+              <Typography variant="subtitle1" gutterBottom>
+                Push Notifications (this device)
+              </Typography>
+              {!pushSupported ? (
+                <Alert severity="warning">
+                  This browser doesn't support push notifications, or the app isn't served over HTTPS.
+                </Alert>
+              ) : (
+                <>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={pushEnabled}
+                        onChange={handleTogglePush}
+                        disabled={saving}
+                      />
+                    }
+                    label={pushEnabled ? 'Enabled on this device' : 'Enable on this device'}
+                  />
+                  <Button
+                    variant="outlined"
+                    onClick={handleTestPush}
+                    disabled={!pushEnabled || saving}
+                    sx={{ ml: 2 }}
+                  >
+                    Send Test Push
+                  </Button>
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+                    Receive browser alerts when alarms trigger. Enable "Push" on individual alarms to use this.
+                  </Typography>
+                </>
+              )}
             </Grid>
           </Grid>
         </TabPanel>

@@ -5,6 +5,7 @@ import compression from 'compression';
 import path from 'path';
 import fs from 'fs';
 import http from 'http';
+import https from 'https';
 import { WebSocketServer, WebSocket } from 'ws';
 import config from './config';
 import logger from './utils/logger';
@@ -17,6 +18,7 @@ import aiDetectionCoordinator from './services/ai/AIDetectionCoordinator';
 import alarmCoordinator from './services/alarm/AlarmCoordinator';
 import notificationService from './services/notification/NotificationService';
 import storageManager from './services/storage';
+import motionDetector from './services/motion/MotionDetector';
 
 // Import routes
 import authRoutes from './routes/auth';
@@ -28,6 +30,7 @@ import recordingRoutes from './routes/recordings';
 import detectionRoutes from './routes/detections';
 import alarmRoutes from './routes/alarms';
 import systemRoutes from './routes/system';
+import notificationRoutes from './routes/notifications';
 import { Camera } from './database/entities';
 
 class SquirrelNVRServer {
@@ -38,13 +41,33 @@ class SquirrelNVRServer {
 
   constructor() {
     this.app = express();
-    this.httpServer = http.createServer(this.app);
+    this.httpServer = this.createServer();
     this.wss = new WebSocketServer({ server: this.httpServer });
 
     this.setupMiddleware();
     this.setupRoutes();
     this.setupWebSocket();
     this.setupErrorHandling();
+  }
+
+  /**
+   * Create the underlying HTTP(S) server. Falls back to plain HTTP if HTTPS is
+   * enabled but the certificate/key can't be read, so the server still starts.
+   */
+  private createServer(): http.Server {
+    if (config.https.enabled) {
+      try {
+        const options = {
+          cert: fs.readFileSync(config.https.certPath),
+          key: fs.readFileSync(config.https.keyPath),
+        };
+        logger.info('HTTPS enabled — serving over TLS');
+        return https.createServer(options, this.app);
+      } catch (error) {
+        logger.error('HTTPS enabled but cert/key could not be loaded; falling back to HTTP:', error);
+      }
+    }
+    return http.createServer(this.app);
   }
 
   /**
@@ -82,6 +105,7 @@ class SquirrelNVRServer {
     this.app.use('/api/detections', detectionRoutes);
     this.app.use('/api/alarms', alarmRoutes);
     this.app.use('/api/system', systemRoutes);
+    this.app.use('/api/notifications', notificationRoutes);
 
     // Serve HLS streams
     this.app.get('/stream/hls/:cameraId/*', (req: Request, res: Response) => {
@@ -196,6 +220,15 @@ class SquirrelNVRServer {
     alarmCoordinator.on('alarm:triggered', (data) => {
       broadcast('alarm:triggered', data);
     });
+
+    // Motion events drive recording + alarms and are surfaced to the UI.
+    motionDetector.on('motion', (cameraId: string, score: number) => {
+      recordingEngine.onMotionDetected(cameraId);
+      alarmCoordinator.onMotion(cameraId).catch((error) =>
+        logger.error('Error handling motion alarm:', error)
+      );
+      broadcast('motion', { cameraId, score });
+    });
   }
 
   /**
@@ -245,11 +278,30 @@ class SquirrelNVRServer {
     // Initialize database
     await initializeDatabase();
 
-    // Initialize services
+    // Preflight check: warn early (but don't fail) if FFmpeg is missing.
+    await streamManager.checkFfmpegAvailable();
+
+    // Initialize services. Optional/external services (email, AI providers)
+    // must not be able to abort startup if they are unavailable.
     await storageManager.initialize();
-    await notificationService.initialize();
-    await aiDetectionCoordinator.initialize();
-    await alarmCoordinator.initialize();
+
+    try {
+      await notificationService.initialize();
+    } catch (error) {
+      logger.warn('Notification service initialization failed (continuing):', error);
+    }
+
+    try {
+      await aiDetectionCoordinator.initialize();
+    } catch (error) {
+      logger.warn('AI detection initialization failed (continuing):', error);
+    }
+
+    try {
+      await alarmCoordinator.initialize();
+    } catch (error) {
+      logger.warn('Alarm coordinator initialization failed (continuing):', error);
+    }
 
     // Auto-start cameras that are enabled with staggered startup to manage memory
     const cameraRepo = AppDataSource.getRepository(Camera);
@@ -277,6 +329,12 @@ class SquirrelNVRServer {
           if (camera.aiEnabled) {
             await aiDetectionCoordinator.startDetection(camera);
             logger.info(`[AutoStart] AI detection started for: ${camera.name}`);
+          }
+
+          // Start motion detection
+          if (camera.motionEnabled) {
+            motionDetector.start(camera);
+            logger.info(`[AutoStart] Motion detection started for: ${camera.name}`);
           }
 
           logger.info(`[AutoStart] ✓ Successfully started camera: ${camera.name}`);
@@ -343,6 +401,7 @@ class SquirrelNVRServer {
 
     try {
       // Stop all streams and recordings
+      motionDetector.stopAll();
       await streamManager.stopAll();
       await recordingEngine.stopAll();
       aiDetectionCoordinator.stopAll();

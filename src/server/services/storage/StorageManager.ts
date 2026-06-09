@@ -7,6 +7,7 @@ import { SystemSettings, Recording, Camera } from '../../database/entities';
 import { LessThan } from 'typeorm';
 
 export interface StorageStats {
+  // Logical budget (recordings vs. the configured maxStorageGB cap)
   totalGB: number;
   usedGB: number;
   availableGB: number;
@@ -14,6 +15,10 @@ export interface StorageStats {
   recordingsCount: number;
   oldestRecording?: Date;
   newestRecording?: Date;
+  // Physical disk for the storage volume (from statfs)
+  diskTotalGB: number;
+  diskFreeGB: number;
+  diskUsedPercent: number;
 }
 
 export class StorageManager extends EventEmitter {
@@ -91,6 +96,8 @@ export class StorageManager extends EventEmitter {
     const availableGB = totalGB - usedGB;
     const usagePercent = (usedGB / totalGB) * 100;
 
+    const disk = await this.getDiskUsage();
+
     return {
       totalGB,
       usedGB,
@@ -99,7 +106,40 @@ export class StorageManager extends EventEmitter {
       recordingsCount: recordings.length,
       oldestRecording: recordings[0]?.createdAt,
       newestRecording: recordings[recordings.length - 1]?.createdAt,
+      diskTotalGB: disk.totalGB,
+      diskFreeGB: disk.freeGB,
+      diskUsedPercent: disk.usedPercent,
     };
+  }
+
+  /**
+   * Physical free space for the volume backing the storage path. Returns zeros
+   * if statfs is unavailable so callers can fall back to the logical budget.
+   */
+  private async getDiskUsage(): Promise<{ totalGB: number; freeGB: number; usedPercent: number }> {
+    try {
+      const target = this.storagePath && fs.existsSync(this.storagePath) ? this.storagePath : process.cwd();
+      // fs.statfs is available on Node >= 18.15.
+      const statfs = (fs.promises as any).statfs as
+        | ((p: string) => Promise<{ bsize: number; blocks: number; bavail: number }>)
+        | undefined;
+
+      if (!statfs) {
+        return { totalGB: 0, freeGB: 0, usedPercent: 0 };
+      }
+
+      const s = await statfs(target);
+      const totalBytes = s.blocks * s.bsize;
+      const freeBytes = s.bavail * s.bsize;
+      const usedBytes = totalBytes - freeBytes;
+      const totalGB = totalBytes / (1024 ** 3);
+      const freeGB = freeBytes / (1024 ** 3);
+      const usedPercent = totalBytes > 0 ? (usedBytes / totalBytes) * 100 : 0;
+      return { totalGB, freeGB, usedPercent };
+    } catch (error) {
+      logger.warn('Unable to read physical disk usage:', error);
+      return { totalGB: 0, freeGB: 0, usedPercent: 0 };
+    }
   }
 
   /**
@@ -164,34 +204,40 @@ export class StorageManager extends EventEmitter {
    * Enforce storage limit by deleting oldest recordings
    */
   private async enforceStorageLimit(): Promise<void> {
-    const stats = await this.getStats();
+    let stats = await this.getStats();
 
-    if (stats.usagePercent < 90) {
-      return; // Storage usage is below 90%
+    // Pressure is whichever is higher: the logical budget (cap) or the actual
+    // disk. This prevents filling the underlying volume even when maxStorageGB
+    // is set larger than the disk.
+    const pressure = (s: StorageStats) => Math.max(s.usagePercent, s.diskUsedPercent);
+
+    if (pressure(stats) < 90) {
+      return; // Below the high-water mark on both measures
     }
 
-    logger.warn(`Storage usage at ${stats.usagePercent.toFixed(1)}%, enforcing limits...`);
+    logger.warn(
+      `Storage pressure high (budget ${stats.usagePercent.toFixed(1)}%, ` +
+      `disk ${stats.diskUsedPercent.toFixed(1)}%), enforcing limits...`
+    );
 
     const recordingRepo = AppDataSource.getRepository(Recording);
     const recordings = await recordingRepo.find({
       order: { createdAt: 'ASC' },
     });
 
-    // Delete oldest recordings until we're below 80%
+    // Delete oldest recordings until we're back below the 80% low-water mark.
     for (const recording of recordings) {
-      if (stats.usagePercent < 80) {
+      if (pressure(stats) < 80) {
         break;
       }
-
       await this.deleteRecording(recording);
-
-      // Recalculate stats
-      const newStats = await this.getStats();
-      stats.usagePercent = newStats.usagePercent;
-      stats.usedGB = newStats.usedGB;
+      stats = await this.getStats();
     }
 
-    logger.info(`Storage usage reduced to ${stats.usagePercent.toFixed(1)}%`);
+    logger.info(
+      `Storage pressure reduced (budget ${stats.usagePercent.toFixed(1)}%, ` +
+      `disk ${stats.diskUsedPercent.toFixed(1)}%)`
+    );
   }
 
   /**
@@ -209,6 +255,11 @@ export class StorageManager extends EventEmitter {
       // Delete thumbnail
       if (recording.thumbnailPath && fs.existsSync(recording.thumbnailPath)) {
         fs.unlinkSync(recording.thumbnailPath);
+      }
+
+      // Delete pre-roll clip if present
+      if (recording.prerollPath && fs.existsSync(recording.prerollPath)) {
+        fs.unlinkSync(recording.prerollPath);
       }
 
       // Delete from database

@@ -80,8 +80,52 @@ class APIClient {
     return `/api/cameras/${id}/snapshot?${Date.now()}`;
   }
 
+  // Two-way audio: upload a short recorded clip to play on the camera.
+  async talkToCamera(id: string, audio: Blob) {
+    const form = new FormData();
+    form.append('audio', audio, 'talk.webm');
+    const response = await this.client.post(`/cameras/${id}/talk`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  }
+
   async testCameraConnection(cameraData: any) {
     const response = await this.client.post('/cameras/test-connection', cameraData);
+    return response.data;
+  }
+
+  async testMotion(id: string) {
+    const response = await this.client.post(`/cameras/${id}/motion/test`);
+    return response.data;
+  }
+
+  async discoverCameras(timeout = 5000) {
+    const response = await this.client.post('/cameras/discover', { timeout }, {
+      timeout: timeout + 10000,
+    });
+    return response.data.devices as Array<{
+      hostname: string;
+      port: number;
+      name?: string;
+      hardware?: string;
+      xaddrs?: string;
+    }>;
+  }
+
+  // PTZ
+  async ptzCommand(cameraId: string, action: string, speed?: number, presetId?: number) {
+    const response = await this.client.post(`/ptz/${cameraId}/command`, { action, speed, presetId });
+    return response.data;
+  }
+
+  async getPtzPresets(cameraId: string) {
+    const response = await this.client.get(`/ptz/${cameraId}/presets`);
+    return response.data.presets;
+  }
+
+  async savePtzPreset(cameraId: string, presetId: number, name?: string) {
+    const response = await this.client.post(`/ptz/${cameraId}/presets`, { presetId, name });
     return response.data;
   }
 
@@ -210,6 +254,27 @@ class APIClient {
 
   async getSystemLogs() {
     const response = await this.client.get('/system/logs');
+    return response.data;
+  }
+
+  // Push notifications
+  async getVapidPublicKey(): Promise<string> {
+    const response = await this.client.get('/notifications/vapid-public-key');
+    return response.data.publicKey;
+  }
+
+  async subscribePush(subscription: PushSubscriptionJSON) {
+    const response = await this.client.post('/notifications/subscribe', subscription);
+    return response.data;
+  }
+
+  async unsubscribePush(endpoint: string) {
+    const response = await this.client.post('/notifications/unsubscribe', { endpoint });
+    return response.data;
+  }
+
+  async sendTestPush() {
+    const response = await this.client.post('/notifications/test');
     return response.data;
   }
 
